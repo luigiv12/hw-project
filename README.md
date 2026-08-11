@@ -211,8 +211,16 @@ cd apps/web && pnpm dev                 # :3001
 | `pnpm db:migrate` | apply migrations |
 | `pnpm db:seed` | reset demo data |
 | `pnpm db:verify` | reconcile summaries against measurements |
+| `pnpm --filter @emissions/api db:studio` | browse the database at :4983 |
 | `pnpm infra:up` / `infra:down` | Postgres + Redis only |
 | `pnpm infra:reset` | destroy volumes and restart |
+
+Any `db:*` script accepts an inline connection string, which is how to point one
+at a deployed database:
+
+```bash
+DATABASE_URL="postgresql://…" pnpm db:verify
+```
 
 **Troubleshooting.** If a change does not appear, check nothing else holds the
 port — `lsof -nP -iTCP:3001 -sTCP:LISTEN` — before suspecting the build. After
