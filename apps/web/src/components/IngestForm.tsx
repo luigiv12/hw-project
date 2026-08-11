@@ -5,15 +5,25 @@ import { ingestSchema, type IngestResult, type Site } from '@emissions/contracts
 import { ApiRequestError, NetworkError, ingest } from '@/lib/api';
 
 type Reading = {
+  /**
+   * Optional producer-assigned identity. Blank means not supplied, and the key
+   * is omitted from the payload rather than sent empty — a device with no
+   * identity to give is not the same as one supplying a blank one.
+   */
+  readingId: string;
   deviceId: string;
   readingTs: string;
   ch4Kg: string;
   source: 'sensor' | 'satellite' | 'manual';
 };
 
+/**
+ * The last completed result. In-flight status lives separately in `busy`, so a
+ * submission never clears the previous outcome — it is replaced only once a new
+ * one exists, and the surrounding layout does not move in between.
+ */
 type Outcome =
   | { kind: 'idle' }
-  | { kind: 'sending' }
   | { kind: 'ok'; result: IngestResult; replayed: boolean }
   | { kind: 'error'; title: string; detail: string; code?: string; fields?: string[] };
 
@@ -56,6 +66,9 @@ function toIso(value: string): string {
 }
 
 const blankReading = (i = 0): Reading => ({
+  // Empty on purpose: the default path exercises the natural-key fallback, which
+  // is what every v1 sensor uses. Supplying one is an explicit choice.
+  readingId: '',
   deviceId: 'FIELD-PROBE-01',
   readingTs: localNow(-i),
   ch4Kg: '12.5',
@@ -72,6 +85,7 @@ export function IngestForm({
   const [siteId, setSiteId] = useState(sites[0]?.id ?? '');
   const [readings, setReadings] = useState<Reading[]>([blankReading()]);
   const [outcome, setOutcome] = useState<Outcome>({ kind: 'idle' });
+  const [busy, setBusy] = useState(false);
   const [dropResponse, setDropResponse] = useState(false);
 
   /**
@@ -126,12 +140,14 @@ export function IngestForm({
   async function submit(isRetry: boolean) {
     const payload = {
       siteId,
-      readings: readings.map((r) => ({
+      readings: readings.map(({ readingId, ...r }) => ({
         ...r,
         // The picker yields local wall time and the ISO field yields an instant;
         // toIso normalises both. An unparseable value passes through unchanged
         // and is caught by the schema below with a field-level message.
         readingTs: toIso(r.readingTs),
+        // Omit the key entirely when blank rather than sending "".
+        ...(readingId.trim() ? { readingId: readingId.trim() } : {}),
       })),
     };
 
@@ -156,7 +172,7 @@ export function IngestForm({
       chaosArmed.current = dropResponse;
     }
 
-    setOutcome({ kind: 'sending' });
+    setBusy(true);
 
     try {
       const { result, replayed } = await ingest(parsed.data, attemptKey.current);
@@ -199,10 +215,11 @@ export function IngestForm({
           detail: err instanceof Error ? err.message : String(err),
         });
       }
+    } finally {
+      setBusy(false);
     }
   }
 
-  const busy = outcome.kind === 'sending';
   const canRetry = outcome.kind === 'error' && attemptKey.current !== null;
 
   return (
@@ -358,6 +375,16 @@ export function IngestForm({
           <div className="reading-row" key={i}>
             <div>
               <input
+                aria-label="Reading ID (optional)"
+                value={r.readingId}
+                onChange={(e) => setReading(i, { readingId: e.target.value })}
+                placeholder="readingId — optional"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+            <div>
+              <input
                 aria-label="Device ID"
                 value={r.deviceId}
                 onChange={(e) => setReading(i, { deviceId: e.target.value })}
@@ -409,7 +436,13 @@ export function IngestForm({
         ))}
 
         <div className="actions" style={{ marginTop: 14 }}>
-          <button className="primary" disabled={busy} onClick={() => submit(false)}>
+          {/* Sized for the widest label so the row does not reflow while busy. */}
+          <button
+            className="primary"
+            style={{ minWidth: 132 }}
+            disabled={busy}
+            onClick={() => submit(false)}
+          >
             {busy ? 'Submitting…' : 'Submit batch'}
           </button>
 

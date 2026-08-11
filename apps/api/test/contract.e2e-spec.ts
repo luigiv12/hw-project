@@ -143,6 +143,37 @@ describe('platform contract', () => {
     });
   });
 
+  describe('site listing order', () => {
+    it('is stable across repeated reads', async () => {
+      const reads = await Promise.all(
+        Array.from({ length: 5 }, () => h.http.get('/sites').expect(200)),
+      );
+
+      const orders = reads.map((r) =>
+        r.body.data.map((s: { id: string }) => s.id).join(','),
+      );
+
+      expect(new Set(orders).size).toBe(1);
+    });
+
+    it('does not reorder when a site is updated', async () => {
+      // Ingest rewrites the site row. Listing order must be a property of the
+      // query, not of when a row was last written.
+      const before = (await h.http.get('/sites').expect(200)).body.data.map(
+        (s: { id: string }) => s.id,
+      );
+
+      const site = await h.createSite();
+      await h.ingest(site.id, [reading({ deviceId: 'ORDER-STABILITY' })]);
+
+      const after = (await h.http.get('/sites').expect(200)).body.data
+        .map((s: { id: string }) => s.id)
+        .filter((id: string) => id !== site.id);
+
+      expect(after).toEqual(before);
+    });
+  });
+
   describe('unknown site', () => {
     it('rejects ingest for a site that does not exist', async () => {
       const res = await h.ingest(randomUUID(), [reading()]);

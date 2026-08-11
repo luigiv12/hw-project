@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, sql } from 'drizzle-orm';
 import {
   ComplianceStatus,
   ErrorCode,
@@ -28,8 +28,21 @@ export class SitesService {
     return toSite(row);
   }
 
+  /**
+   * All sites, in a total order.
+   *
+   * `id` is a tiebreak rather than decoration: sites created in the same
+   * transaction share a `created_at`, and any ordering with ties lets Postgres
+   * return rows in whatever order the scan produces — which changes when a row
+   * is updated. The dashboard polls this endpoint continuously, so the order
+   * must not depend on write history.
+   */
   async findAll(): Promise<Site[]> {
-    const rows = await this.db.select().from(sites).orderBy(desc(sites.createdAt));
+    const rows = await this.db
+      .select()
+      .from(sites)
+      .orderBy(asc(sites.name), asc(sites.id));
+
     return rows.map(toSite);
   }
 
