@@ -27,6 +27,17 @@ export function encodeCursor(name: string, id: string): string {
   return Buffer.from(JSON.stringify([name, id]), 'utf8').toString('base64url');
 }
 
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns null for anything that is not a cursor this service issued.
+ *
+ * The id is checked against the UUID shape, not merely against being a string:
+ * it is interpolated into a comparison against a `uuid` column, and a value that
+ * decodes cleanly but is not a UUID would otherwise fail inside Postgres and
+ * surface as a server error rather than as the bad input it is.
+ */
 export function decodeCursor(cursor: string): { name: string; id: string } | null {
   try {
     const parsed: unknown = JSON.parse(
@@ -37,7 +48,8 @@ export function decodeCursor(cursor: string): { name: string; id: string } | nul
       !Array.isArray(parsed) ||
       parsed.length !== 2 ||
       typeof parsed[0] !== 'string' ||
-      typeof parsed[1] !== 'string'
+      typeof parsed[1] !== 'string' ||
+      !UUID.test(parsed[1])
     ) {
       return null;
     }

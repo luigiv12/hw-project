@@ -270,6 +270,24 @@ describe('platform contract', () => {
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
       expect(res.body.error.details[0].path).toBe('cursor');
     });
+
+    it.each([
+      ['id is not a uuid', ['Some Site', 'not-a-uuid']],
+      ['wrong arity', ['only-one']],
+      ['wrong types', [1, 2]],
+      ['not an array', { name: 'x', id: 'y' }],
+    ])('rejects a decodable cursor with %s as bad input, not a server error', async (_label, payload) => {
+      const cursor = Buffer.from(JSON.stringify(payload), 'utf8').toString(
+        'base64url',
+      );
+
+      const res = await h.http.get(`/sites?cursor=${cursor}`);
+
+      // A cursor is client-supplied. Anything that reaches the database from it
+      // must be validated first, or bad input surfaces as a 500.
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
   });
 
   describe('site listing order', () => {
