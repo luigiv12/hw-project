@@ -6,6 +6,8 @@ import {
   MAX_BATCH_SIZE,
   MAX_PAGE_SIZE,
 } from '@emissions/contracts';
+import { eq, sql } from 'drizzle-orm';
+import { measurements } from '../src/db/schema';
 import { Harness, reading } from './harness';
 
 describe('platform contract', () => {
@@ -287,6 +289,97 @@ describe('platform contract', () => {
       // must be validated first, or bad input surfaces as a 500.
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
+  });
+
+  describe('reading window', () => {
+    it('is null for a site with no readings', async () => {
+      const site = await h.createSite();
+      const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
+
+      expect(res.body.data.firstReadingAt).toBeNull();
+      expect(res.body.data.lastReadingAt).toBeNull();
+    });
+
+    it('reports the span of the readings held', async () => {
+      const site = await h.createSite();
+
+      await h.ingest(site.id, [
+        reading({ deviceId: 'W1', readingTs: '2026-06-01T00:00:00.000Z' }),
+        reading({ deviceId: 'W1', readingTs: '2026-06-15T00:00:00.000Z' }),
+      ]);
+
+      const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
+      expect(res.body.data.firstReadingAt).toBe('2026-06-01T00:00:00.000Z');
+      expect(res.body.data.lastReadingAt).toBe('2026-06-15T00:00:00.000Z');
+    });
+
+    it('widens backwards when older readings arrive later', async () => {
+      const site = await h.createSite();
+
+      await h.ingest(site.id, [
+        reading({ deviceId: 'W2', readingTs: '2026-06-10T00:00:00.000Z' }),
+      ]);
+      // A backfill must move the start of the span, not be ignored for being
+      // older than what is already recorded.
+      await h.ingest(site.id, [
+        reading({ deviceId: 'W2', readingTs: '2026-05-01T00:00:00.000Z' }),
+      ]);
+
+      const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
+      expect(res.body.data.firstReadingAt).toBe('2026-05-01T00:00:00.000Z');
+      expect(res.body.data.lastReadingAt).toBe('2026-06-10T00:00:00.000Z');
+    });
+
+    it('does not move when a batch is de-duplicated', async () => {
+      const site = await h.createSite();
+      const batch = [
+        reading({ deviceId: 'W3', readingTs: '2026-06-05T00:00:00.000Z' }),
+      ];
+
+      await h.ingest(site.id, batch);
+      const before = (await h.http.get(`/sites/${site.id}/metrics`)).body.data;
+
+      // Nothing was stored, so the span it summarises has not changed.
+      await h.ingest(site.id, batch);
+      const after = (await h.http.get(`/sites/${site.id}/metrics`)).body.data;
+
+      expect(after.firstReadingAt).toBe(before.firstReadingAt);
+      expect(after.lastReadingAt).toBe(before.lastReadingAt);
+    });
+
+    it('matches what the measurements actually say', async () => {
+      const site = await h.createSite();
+
+      await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          h.ingest(site.id, [
+            reading({
+              deviceId: `W4-${i}`,
+              readingTs: new Date(Date.UTC(2026, 5, i + 1)).toISOString(),
+            }),
+          ]),
+        ),
+      );
+
+      const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
+
+      const [actual] = await h.db
+        .select({
+          first: sql<Date>`min(${measurements.readingTs})`,
+          last: sql<Date>`max(${measurements.readingTs})`,
+        })
+        .from(measurements)
+        .where(eq(measurements.siteId, site.id));
+
+      // The denormalised value and the rows it summarises, after concurrent
+      // writes.
+      expect(res.body.data.firstReadingAt).toBe(
+        new Date(actual.first).toISOString(),
+      );
+      expect(res.body.data.lastReadingAt).toBe(
+        new Date(actual.last).toISOString(),
+      );
     });
   });
 

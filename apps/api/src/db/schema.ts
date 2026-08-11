@@ -58,6 +58,21 @@ export const sites = pgTable('sites', {
     .default(0),
 
   /**
+   * The span of readings held for this site, maintained by the ingest
+   * transaction alongside the counters above.
+   *
+   * Denormalised for the same reason the total is: deriving them with
+   * MIN/MAX over `measurements` puts no bound on the partition key, so Postgres
+   * can prune nothing and the query grows with all of history rather than with
+   * the window being asked about.
+   *
+   * Null until a site has readings — a site with none has no first or last, and
+   * any sentinel value would be a lie.
+   */
+  firstReadingAt: timestamp('first_reading_at', { withTimezone: true }),
+  lastReadingAt: timestamp('last_reading_at', { withTimezone: true }),
+
+  /**
    * Incremented on every summary change. Not used for optimistic locking — the
    * ingest path takes a pessimistic row lock — but it gives readers a cheap
    * change token and makes lost updates visible in tests if the lock ever

@@ -90,6 +90,34 @@ async function main(): Promise<void> {
       }
     }
 
+    /**
+     * The denormalised reading span, checked the same way as the total. A value
+     * maintained by writes rather than derived by reads has to be verifiable
+     * against the rows it claims to summarise, or it is only trustworthy by
+     * assertion.
+     */
+    const { rows: spans } = await pool.query<{ name: string; problem: string }>(`
+      SELECT s.name,
+             CASE
+               WHEN m.first_at IS NULL AND (s.first_reading_at IS NOT NULL OR s.last_reading_at IS NOT NULL)
+                 THEN 'has a reading span but no readings'
+               WHEN m.first_at IS NOT NULL AND s.first_reading_at IS DISTINCT FROM m.first_at
+                 THEN 'first_reading_at ' || s.first_reading_at || ' <> actual ' || m.first_at
+               WHEN m.last_at IS NOT NULL AND s.last_reading_at IS DISTINCT FROM m.last_at
+                 THEN 'last_reading_at ' || s.last_reading_at || ' <> actual ' || m.last_at
+             END AS problem
+      FROM sites s
+      LEFT JOIN (
+        SELECT site_id, MIN(reading_ts) AS first_at, MAX(reading_ts) AS last_at
+        FROM measurements GROUP BY site_id
+      ) m ON m.site_id = s.id
+    `);
+
+    for (const s2 of spans.filter((r) => r.problem)) {
+      drifted++;
+      console.log(`\n  ${s2.name}: ${s2.problem}`);
+    }
+
     // Measurements whose site no longer exists would be invisible above.
     const { rows: orphans } = await pool.query<{ n: string }>(`
       SELECT COUNT(*)::text AS n
