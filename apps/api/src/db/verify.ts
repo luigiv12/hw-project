@@ -104,6 +104,30 @@ async function main(): Promise<void> {
       console.log(`\n  ${orphanCount} measurement(s) reference a missing site`);
     }
 
+    /**
+     * `measurements.batch_id` is not a foreign key — batch records are expected
+     * to be expired while measurements are permanent — so nothing at the schema
+     * level stops a writer inventing one. Checked here instead.
+     *
+     * Once a retention policy exists this becomes an expected, benign count for
+     * measurements older than the retention window, and the check needs a
+     * cutoff. It is meaningful now because nothing is expired yet.
+     */
+    const { rows: danglingBatches } = await pool.query<{ n: string }>(`
+      SELECT COUNT(*)::text AS n
+      FROM measurements m
+      LEFT JOIN ingestion_batches b ON b.id = m.batch_id
+      WHERE b.id IS NULL
+    `);
+
+    const danglingCount = Number(danglingBatches[0]?.n ?? 0);
+    if (danglingCount > 0) {
+      drifted++;
+      console.log(
+        `\n  ${danglingCount} measurement(s) reference a batch that does not exist`,
+      );
+    }
+
     if (drifted === 0) {
       console.log(
         `\n  ${rows.length} site(s) reconciled — summaries match measurements exactly\n`,

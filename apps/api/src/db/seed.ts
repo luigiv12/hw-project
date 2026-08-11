@@ -1,7 +1,8 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import { Pool } from 'pg';
-import { measurements, sites } from './schema';
+import { createHash } from 'node:crypto';
+import { ingestionBatches, measurements, sites } from './schema';
 
 /**
  * Seeds a demo dataset.
@@ -116,6 +117,37 @@ async function main(): Promise<void> {
           version: rows.length,
         });
 
+        /**
+         * The batch records the readings claim to belong to.
+         *
+         * Written before the measurements that reference them, so seeded data is
+         * shaped exactly like ingested data: every `measurements.batch_id`
+         * resolves, and a reviewer can replay a seeded idempotency key and see
+         * the replay path behave as it would for a real client.
+         */
+        const byBatch = new Map<string, typeof rows>();
+        for (const r of rows) {
+          const group = byBatch.get(r.batchId) ?? [];
+          group.push(r);
+          byBatch.set(r.batchId, group);
+        }
+
+        for (const [batchId, group] of byBatch) {
+          const acceptedKg = group.reduce((acc, r) => acc + r.ch4, 0);
+
+          await tx.insert(ingestionBatches).values({
+            id: batchId,
+            siteId: site.id,
+            idempotencyKey: `seed-${batchId}`,
+            requestHash: hashOf(site.id, group),
+            status: 'completed',
+            readingsSubmitted: group.length,
+            readingsAccepted: group.length,
+            acceptedCh4Kg: acceptedKg.toFixed(4),
+            completedAt: new Date(),
+          });
+        }
+
         // Chunked to keep parameter counts well under the protocol limit.
         for (let i = 0; i < rows.length; i += 500) {
           await tx.insert(measurements).values(
@@ -157,6 +189,20 @@ async function main(): Promise<void> {
   } finally {
     await pool.end();
   }
+}
+
+/** Stands in for the request fingerprint a real ingest would have stored. */
+function hashOf(
+  siteId: string,
+  group: { deviceId: string; ts: Date; ch4: number }[],
+): string {
+  const canonical = JSON.stringify({
+    siteId,
+    readings: group
+      .map((r) => ({ d: r.deviceId, t: r.ts.getTime(), c: r.ch4 }))
+      .sort((a, b) => a.d.localeCompare(b.d) || a.t - b.t),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 function buildReadings(site: SeedSite) {
