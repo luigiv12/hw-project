@@ -441,8 +441,15 @@ numbers while looking healthy.
 
 **What would change it:** a dashboard driving alarm response rather than
 reporting. The upgrade is additive — the outbox events are already written
-transactionally, so an `@Sse()` endpoint fed by the dispatcher touches neither
-the schema nor the ingest transaction.
+transactionally, so a **Server-Sent Events** endpoint (`@Sse()`, an HTTP response
+held open so the server can push as events occur) fed by the dispatcher touches
+neither the schema nor the ingest transaction. SSE rather than WebSockets because
+the dashboard only needs server-to-client traffic, and SSE reconnects natively
+over ordinary HTTP without an upgrade handshake or sticky sessions.
+
+The stream would have to be treated as best-effort, not as the source of truth:
+the client refetches full state over REST on connect and reconnect, so a missed
+event self-heals rather than leaving the dashboard quietly wrong.
 
 ### `BATCH_IN_PROGRESS` is currently unreachable
 
@@ -480,6 +487,39 @@ NOTHING`. Strictly stronger than the current index and would make it redundant,
 leaving one mechanism per case. Roughly 5–10 GB at 100M readings, hash
 partitionable by `site_id`. Not implemented: it closes a hole in a feature with
 no producers, and the time was better spent on the concurrency tests.
+
+### Writes to one site are serialised
+
+The brief asks for concurrency *safety* and storage *volume* — "high-concurrency
+updates", "10 concurrent sources updating the same `site_id`", "100M+ rows". It
+does not state a throughput requirement, and this design trades per-site write
+throughput for correctness deliberately.
+
+The row lock in §3 means writes to a single site proceed one at a time. Writes to
+*different* sites take different locks and do not contend.
+
+A rough local probe — 40 concurrent batches of 50 readings — showed no
+measurable difference between targeting one site and spreading across four
+(~33 batches/s either way). That number is not a benchmark: the harness forked 40
+`curl` processes, so it very likely measured the client. The useful signal is the
+*shape* — per-site serialisation cost nothing detectable, meaning the lock is
+held for a small fraction of request time and is not the first thing that would
+bind.
+
+**If per-site throughput did become a requirement**, in increasing order of cost:
+
+1. **Sharded counters** — N counter rows per site, summed on read. Removes the
+   single hot row while keeping the update synchronous and consistent.
+2. **Asynchronous summary** — persist measurements in the request, update the
+   total from an outbox consumer. Trades read-your-writes for write throughput.
+3. **Accept-then-process** — return `202 Accepted`, enqueue, process off the
+   request path. Highest ceiling, but it changes the contract: ingest could no
+   longer return the resulting total, and the dashboard could no longer show the
+   effect of a submission immediately.
+
+The brief pushes away from (3): `/ingest` is specified as atomic, and the
+compliance status it returns is the point. Synchronous is the right reading of
+the requirement, and the ceiling is a consequence of it rather than an oversight.
 
 ### Idempotency keys are never expired
 
