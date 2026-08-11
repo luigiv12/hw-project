@@ -8,6 +8,8 @@
 export const ErrorCode = {
   /** Request body or params failed schema validation. Details carry field paths. */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
+  /** No route matches. Distinct from a missing resource. */
+  NOT_FOUND: 'NOT_FOUND',
   /** No site exists with the given id. */
   SITE_NOT_FOUND: 'SITE_NOT_FOUND',
   /** Batch exceeded the per-request reading limit. */
@@ -34,6 +36,7 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 /** HTTP status paired with each code, so the mapping lives in one place. */
 export const ERROR_STATUS: Record<ErrorCode, number> = {
   [ErrorCode.VALIDATION_ERROR]: 400,
+  [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.SITE_NOT_FOUND]: 404,
   [ErrorCode.BATCH_TOO_LARGE]: 400,
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 409,
