@@ -111,8 +111,11 @@ export function IngestForm({
    *
    * Cleared only after a success, at which point the next submission is a
    * genuinely new batch and deserves a new key.
+   *
+   * State rather than a ref: the key is shown in the failure notice, so a change
+   * to it has to reach the screen.
    */
-  const attemptKey = useRef<string | null>(null);
+  const [attemptKey, setAttemptKey] = useState<string | null>(null);
 
   /** Consumed by the first send after the toggle is enabled. */
   const chaosArmed = useRef(false);
@@ -167,15 +170,18 @@ export function IngestForm({
       return;
     }
 
-    if (!isRetry || !attemptKey.current) {
-      attemptKey.current = crypto.randomUUID();
+    // A retry reuses the key from the attempt that failed; anything else is a
+    // new batch and earns a new one.
+    const key = isRetry && attemptKey ? attemptKey : crypto.randomUUID();
+    if (key !== attemptKey) {
+      setAttemptKey(key);
       chaosArmed.current = dropResponse;
     }
 
     setBusy(true);
 
     try {
-      const { result, replayed } = await ingest(parsed.data, attemptKey.current);
+      const { result, replayed } = await ingest(parsed.data, key);
 
       /**
        * Simulates the failure this system is built for: the server committed
@@ -190,7 +196,7 @@ export function IngestForm({
         );
       }
 
-      attemptKey.current = null;
+      setAttemptKey(null);
       setOutcome({ kind: 'ok', result, replayed });
       onIngested();
     } catch (err: unknown) {
@@ -220,7 +226,7 @@ export function IngestForm({
     }
   }
 
-  const canRetry = outcome.kind === 'error' && attemptKey.current !== null;
+  const canRetry = outcome.kind === 'error' && attemptKey !== null;
 
   return (
     <div className="card">
@@ -265,7 +271,7 @@ export function IngestForm({
             )}
             {canRetry && (
               <div className="hint" style={{ marginTop: 8 }}>
-                Retry will reuse <code>Idempotency-Key: {attemptKey.current}</code>
+                Retry will reuse <code>Idempotency-Key: {attemptKey}</code>
               </div>
             )}
           </div>
@@ -441,13 +447,13 @@ export function IngestForm({
             className="primary"
             style={{ minWidth: 132 }}
             disabled={busy}
-            onClick={() => submit(false)}
+            onClick={() => void submit(false)}
           >
             {busy ? 'Submitting…' : 'Submit batch'}
           </button>
 
           {canRetry && (
-            <button className="secondary" disabled={busy} onClick={() => submit(true)}>
+            <button className="secondary" disabled={busy} onClick={() => void submit(true)}>
               Retry with the same key
             </button>
           )}

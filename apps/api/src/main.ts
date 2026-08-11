@@ -58,7 +58,6 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(env.PORT, '0.0.0.0');
 
-  // eslint-disable-next-line no-console
   console.log(
     `[api] listening on :${env.PORT} (${env.NODE_ENV}) — versions: v1 (legacy sensors), v2 (current)`,
   );
