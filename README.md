@@ -132,7 +132,7 @@ means double-counting, below means a lost update.
 
 ```
 POST /sites                    create a site           (also /v1, /v2)
-GET  /sites                    list with totals
+GET  /sites?limit=&cursor=     list with totals, paginated
 GET  /sites/:id                one site
 GET  /sites/:id/metrics        summary + compliance status
 POST /v2/ingest                current format          Idempotency-Key header
@@ -152,6 +152,16 @@ Every response is enveloped:
 { "error": { "code": "SITE_NOT_FOUND", "message": "…", "details": [] }, "meta": { … } }
 ```
 
+Collections add page details to `meta`, leaving `data` a bare array:
+
+```jsonc
+{ "data": [ … ], "meta": { …, "page": { "limit": 50, "nextCursor": "…" } } }
+```
+
+Cursors are keyset rather than offsets, so pages stay correct while rows are
+being written. Hand back `nextCursor` verbatim; `null` means the last page. The
+full convention is in [ARCHITECTURE.md](./ARCHITECTURE.md#7-platform-conventions).
+
 Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 
 ---
@@ -159,7 +169,7 @@ Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 ## Tests
 
 ```bash
-pnpm test          # 74 tests, ~4s
+pnpm test          # 90 tests, ~5s
 ```
 
 Runs against the compose Postgres — no mocks, because what is under test
@@ -173,6 +183,7 @@ The two headline cases live in `apps/api/test/concurrency.e2e-spec.ts`:
   byte-identically, total +200 once
 - **10 distinct batches, one site** → all ten applied, total exactly +100, no
   lost updates
+- the same two at **50 concurrent writers**, for headroom
 
 ---
 

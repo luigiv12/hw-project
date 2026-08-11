@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { ComplianceStatus, ErrorCode, MAX_BATCH_SIZE } from '@emissions/contracts';
+import {
+  ComplianceStatus,
+  DEFAULT_PAGE_SIZE,
+  ErrorCode,
+  MAX_BATCH_SIZE,
+  MAX_PAGE_SIZE,
+} from '@emissions/contracts';
 import { Harness, reading } from './harness';
 
 describe('platform contract', () => {
@@ -173,6 +179,96 @@ describe('platform contract', () => {
     it('still carries a request id', async () => {
       const res = await h.http.get('/no-such-route').expect(404);
       expect(res.body.meta.requestId).not.toBe('unknown');
+    });
+  });
+
+  describe('pagination', () => {
+    /** Enough to page through several times at a small limit. */
+    async function seedSites(n: number): Promise<string[]> {
+      const created: string[] = [];
+      for (let i = 0; i < n; i++) created.push((await h.createSite()).id);
+      return created;
+    }
+
+    it('returns page details in meta, and items in data', async () => {
+      const res = await h.http.get('/sites?limit=2').expect(200);
+
+      expect(Array.isArray(res.body.data)).toBe(true);
+      expect(res.body.data.length).toBeLessThanOrEqual(2);
+      expect(res.body.meta.page).toMatchObject({ limit: 2 });
+      expect(res.body.meta.page).toHaveProperty('nextCursor');
+    });
+
+    it('walks every row exactly once across pages', async () => {
+      await seedSites(7);
+
+      const seen: string[] = [];
+      let cursor: string | null = null;
+
+      for (let guard = 0; guard < 50; guard++) {
+        const url: string = cursor
+          ? `/sites?limit=3&cursor=${encodeURIComponent(cursor)}`
+          : '/sites?limit=3';
+
+        const res = await h.http.get(url).expect(200);
+        seen.push(...res.body.data.map((s: { id: string }) => s.id));
+
+        cursor = res.body.meta.page.nextCursor;
+        if (!cursor) break;
+      }
+
+      // No repeats and no gaps: a full walk must equal a single large page.
+      const all = await h.http.get(`/sites?limit=${MAX_PAGE_SIZE}`).expect(200);
+      const expected = all.body.data.map((s: { id: string }) => s.id);
+
+      expect(new Set(seen).size).toBe(seen.length);
+      expect(seen).toEqual(expected);
+    });
+
+    it('reports no next cursor on the final page', async () => {
+      const res = await h.http.get(`/sites?limit=${MAX_PAGE_SIZE}`).expect(200);
+      expect(res.body.meta.page.nextCursor).toBeNull();
+    });
+
+    it('does not skip rows when one is inserted mid-walk', async () => {
+      await seedSites(4);
+
+      const first = await h.http.get('/sites?limit=2').expect(200);
+      const firstIds = first.body.data.map((s: { id: string }) => s.id);
+
+      // A cursor addresses a position in the sort order, not an offset, so rows
+      // arriving between pages cannot shift the ones already returned.
+      await h.createSite();
+
+      const second = await h.http
+        .get(`/sites?limit=2&cursor=${encodeURIComponent(first.body.meta.page.nextCursor)}`)
+        .expect(200);
+
+      const secondIds = second.body.data.map((s: { id: string }) => s.id);
+      expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
+    });
+
+    it('applies a default limit when none is given', async () => {
+      const res = await h.http.get('/sites').expect(200);
+      expect(res.body.meta.page.limit).toBe(DEFAULT_PAGE_SIZE);
+    });
+
+    it('refuses a limit above the maximum', async () => {
+      const res = await h.http.get(`/sites?limit=${MAX_PAGE_SIZE + 1}`).expect(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
+
+    it('refuses a non-numeric or non-positive limit', async () => {
+      expect((await h.http.get('/sites?limit=abc')).status).toBe(400);
+      expect((await h.http.get('/sites?limit=0')).status).toBe(400);
+      expect((await h.http.get('/sites?limit=-1')).status).toBe(400);
+    });
+
+    it('rejects a malformed cursor rather than silently starting over', async () => {
+      const res = await h.http.get('/sites?cursor=not-a-real-cursor').expect(400);
+
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(res.body.error.details[0].path).toBe('cursor');
     });
   });
 
