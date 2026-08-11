@@ -13,6 +13,21 @@ describe('transactional outbox', () => {
   const eventsFor = (siteId: string) =>
     h.db.select().from(outbox).where(eq(outbox.aggregateId, siteId));
 
+  /**
+   * Runs the dispatcher until it has nothing left to claim.
+   *
+   * A single pass claims a bounded batch, so with a backlog larger than that
+   * bound one pass does not reach a specific event. Tests that assert on a
+   * particular event's delivery must drain rather than assume one pass suffices.
+   * Capped so a permanently failing delivery cannot spin forever.
+   */
+  async function drain(dispatcher: OutboxDispatcher): Promise<void> {
+    for (let pass = 0; pass < 50; pass++) {
+      if ((await dispatcher.runOnce()) === 0) return;
+    }
+    throw new Error('outbox did not drain within 50 passes');
+  }
+
   it('writes the event in the same transaction as the measurements', async () => {
     const site = await h.createSite();
     await h.ingest(site.id, [reading({ ch4Kg: '15.0000' })]);
@@ -94,8 +109,7 @@ describe('transactional outbox', () => {
 
     // Driven explicitly rather than by the timer, so the assertion is not racing
     // a background poll.
-    const dispatcher = h.app.get(OutboxDispatcher);
-    await dispatcher.runOnce();
+    await drain(h.app.get(OutboxDispatcher));
 
     const after = await h.db
       .select()
@@ -109,7 +123,7 @@ describe('transactional outbox', () => {
     await h.ingest(site.id, [reading({ ch4Kg: '2.0000' })]);
 
     const dispatcher = h.app.get(OutboxDispatcher);
-    await dispatcher.runOnce();
+    await drain(dispatcher);
 
     const [event] = await eventsFor(site.id);
     const firstPublishedAt = event.publishedAt;

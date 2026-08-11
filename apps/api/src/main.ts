@@ -28,8 +28,8 @@ async function bootstrap(): Promise<void> {
    *
    *   /sites, /sites/:id/metrics   version-neutral + v1 + v2 — identical in
    *                                every version, so there is nothing to
-   *                                disambiguate and the spec's unversioned
-   *                                URLs work as written.
+   *                                disambiguate, and unversioned URLs keep
+   *                                working.
    *
    *   /ingest                      v1 and v2 only; unversioned 404s.
    *

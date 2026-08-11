@@ -33,8 +33,8 @@ export type Database = NodePgDatabase<typeof schema>;
           /**
            * The ingest path holds a row lock for the duration of its
            * transaction, so under concurrent load connections are the binding
-           * resource. Sized to comfortably exceed the spec's 10-concurrent-
-           * writer scenario without letting a stampede exhaust Postgres.
+           * resource. Sized to absorb bursts of concurrent writers without
+           * letting a stampede exhaust Postgres.
            */
           max: 20,
           idleTimeoutMillis: 30_000,
