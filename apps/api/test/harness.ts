@@ -32,7 +32,15 @@ export class Harness {
     this.app = moduleRef.createNestApplication();
     // Mirror main.ts: versioned routes must resolve identically under test.
     this.app.enableVersioning({ type: VersioningType.URI });
-    await this.app.init();
+
+    /**
+     * Bind once on an ephemeral port rather than only calling init().
+     *
+     * Without a listening server, supertest binds a fresh port for every
+     * request; a burst of concurrent requests exhausts that and surfaces as
+     * ECONNRESET — a limit of the harness, not of the API.
+     */
+    await this.app.listen(0);
 
     this.db = this.app.get<Database>(DB);
   }

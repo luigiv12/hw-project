@@ -8,6 +8,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { DbModule } from './db/db.module';
 import { HealthModule } from './health/health.module';
+import { RootModule } from './root/root.module';
 import { SitesModule } from './sites/sites.module';
 import { IngestModule } from './ingest/ingest.module';
 import { OutboxModule } from './outbox/outbox.module';
@@ -46,6 +47,7 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
 
     MetricsModule,
     DbModule,
+    RootModule,
     HealthModule,
     SitesModule,
     IngestModule,
@@ -62,8 +64,15 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    // Runs before everything else so the request id exists for the whole
-    // lifecycle, including failures handled by the exception filter.
-    consumer.apply(RequestIdMiddleware).forRoutes('*splat');
+    /**
+     * Runs before everything else so the request id exists for the whole
+     * lifecycle, including responses produced by the exception filter for
+     * routes that do not exist.
+     *
+     * The braces make the wildcard optional. A bare `*splat` requires at least
+     * one path segment and so never matches `/`, leaving the root the one URL
+     * with no correlation id.
+     */
+    consumer.apply(RequestIdMiddleware).forRoutes('{*splat}');
   }
 }

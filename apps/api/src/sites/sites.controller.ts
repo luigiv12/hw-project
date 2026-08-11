@@ -7,23 +7,27 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
 import {
   createSiteSchema,
+  paginationQuerySchema,
   type CreateSiteInput,
+  type PaginationQuery,
   type Site,
   type SiteMetrics,
 } from '@emissions/contracts';
 import { SitesService } from './sites.service';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { Paginated } from '../common/paginated';
 
 /**
  * Site management and analytics.
  *
  * Answers on the unversioned path as well as v1 and v2: these endpoints are
  * identical across versions, so there is nothing to disambiguate, and the
- * spec's unversioned URLs work as written. `/ingest` is the endpoint where
+ * unversioned URLs keep working. `/ingest` is the endpoint where
  * versions genuinely differ, and it is strict about it.
  *
  * Handlers return plain domain objects — the global interceptor applies the
@@ -42,8 +46,10 @@ export class SitesController {
   }
 
   @Get()
-  findAll(): Promise<Site[]> {
-    return this.sites.findAll();
+  findAll(
+    @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
+  ): Promise<Paginated<Site>> {
+    return this.sites.findPage(query);
   }
 
   @Get(':id')

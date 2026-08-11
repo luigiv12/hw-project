@@ -75,8 +75,8 @@ export class IngestMeasurementsHandler
        * Step 1 — pessimistic lock on the site row.
        *
        * Taken FIRST, before touching the batch table, and held for the whole
-       * transaction. This is what makes the spec's "10 concurrent sources
-       * updating the same site_id" safe, and the ordering matters:
+       * transaction. This is what makes concurrent sources updating the same
+       * site safe, and the ordering matters:
        *
        *   - Concurrent *distinct* batches serialise here, so each one's delta is
        *     applied to a total the previous one already committed. No lost

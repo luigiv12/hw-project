@@ -88,10 +88,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
     };
   }
 
+  /**
+   * Fallback mapping for framework-raised exceptions only. Anything the domain
+   * throws arrives as an AppException carrying its own code and never reaches
+   * here, so this maps the status to the most general code that fits — an
+   * unmatched route is not a missing site.
+   */
   private codeForStatus(status: number): ErrorCode {
     switch (status) {
       case HttpStatus.NOT_FOUND:
-        return ErrorCode.SITE_NOT_FOUND;
+        return ErrorCode.NOT_FOUND;
       case HttpStatus.BAD_REQUEST:
         return ErrorCode.VALIDATION_ERROR;
       case HttpStatus.TOO_MANY_REQUESTS:
