@@ -87,11 +87,11 @@ reviewer having to ingest anything.
 | Build Command | `pnpm --filter @emissions/web build` |
 | Install Command | leave default — Vercel handles the pnpm workspace |
 
-`next.config.ts` disables `output: 'standalone'` when `VERCEL` is set. That
-setting exists for the Docker image, which runs a Node server; Vercel builds its
-own serverless output and fails on the file-tracing manifest standalone
-produces. Nothing to configure — noted because the two targets genuinely need
-different Next output modes from one config.
+Nothing to configure for the Next output mode. `output: 'standalone'` produces a
+self-contained Node server for the Docker image and is opted into by that
+Dockerfile via `BUILD_STANDALONE=1`; every other build, Vercel included, gets
+Next's default. A platform building its own serverless output would fail looking
+for the file-tracing manifest standalone emits, so the default is the safe one.
 
 ### Variables
 

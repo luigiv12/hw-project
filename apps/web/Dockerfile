@@ -26,6 +26,11 @@ COPY apps/web apps/web
 ARG NEXT_PUBLIC_API_URL=http://localhost:3000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# This image runs a self-contained Node server, so it asks Next for one. Set
+# here rather than inferred in next.config.ts: the build that needs the output
+# is the build that declares it.
+ENV BUILD_STANDALONE=1
+
 RUN pnpm --filter @emissions/web build
 
 # ---------------------------------------------------------------------------
