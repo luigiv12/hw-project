@@ -1,0 +1,23 @@
+{
+  "name": "emissions-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Emissions Ingestion & Analytics Engine — Highwood engineering challenge",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=11"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @emissions/api db:migrate",
+    "db:seed": "pnpm --filter @emissions/api db:seed",
+    "db:verify": "pnpm --filter @emissions/api db:verify",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d postgres redis"
+  }
+}

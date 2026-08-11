@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "moduleResolution": "node",
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "rootDir": "./src",
+
+    // NestJS dependency injection reads constructor parameter types at runtime
+    // from metadata the compiler emits. Without these two flags DI resolves
+    // every injected dependency as `Object` and the container cannot wire itself.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "strictBindCallApply": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "declaration": false,
+    "removeComments": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+
+    /**
+     * Deliberately NOT incremental.
+     *
+     * nest-cli sets `deleteOutDir: true`, which wipes dist/ before each build,
+     * but tsc writes its .tsbuildinfo next to tsconfig.json — outside dist/. The
+     * cache therefore survives the wipe and reports files as already emitted
+     * that no longer exist, producing a dist/ missing whole directories that
+     * still typechecks and builds cleanly. It fails only at require() time.
+     *
+     * A full build of this project takes a couple of seconds. That is a good
+     * trade against a build system that can silently ship an incomplete image.
+     */
+    "incremental": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

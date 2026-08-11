@@ -1,1 +1,31 @@
 .DS_Store
+
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# env — .env.example is committed, real env files are not
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# editor
+.idea/
+.vscode/*
+!.vscode/extensions.json

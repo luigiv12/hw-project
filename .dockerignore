@@ -1,0 +1,21 @@
+# Never copy host build output or dependencies into the image — they are
+# platform-specific and would shadow what the build installs.
+node_modules
+**/node_modules
+dist
+**/dist
+.next
+**/.next
+*.tsbuildinfo
+
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+*.log
+coverage
+.vscode
+.idea
+.DS_Store

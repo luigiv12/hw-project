@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+
+    /**
+     * Emitted as CommonJS.
+     *
+     * The API is a CommonJS NestJS build and loads this package with require();
+     * Next.js consumes CJS packages without complaint. Shipping raw .ts here
+     * instead looks tidy in a monorepo and then fails at runtime, because the
+     * relative `.js` specifiers inside these sources have no .js files to
+     * resolve to until something compiles them.
+     */
+    "module": "commonjs",
+    "moduleResolution": "node",
+
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,14 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+# Native postinstall scripts pnpm blocks by default. Both are build tooling that
+# fetches a platform binary; without them tsx and drizzle-kit cannot run.
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@nestjs/common@11.1.29'
+  - '@nestjs/core@11.1.29'
+  - '@nestjs/platform-express@11.1.29'
+  - '@nestjs/testing@11.1.29'
+  - tsx@4.23.12

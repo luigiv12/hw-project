@@ -1,0 +1,122 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: emissions_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-emissions}
+      POSTGRES_USER: ${POSTGRES_USER:-emissions}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-emissions}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - emissions_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Optional: candidates can choose to use it for idempotency keys, caching, etc.
+  redis:
+    image: redis:7-alpine
+    container_name: emissions_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: ["redis-server", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Optional: DB admin UI for reviewers/candidates. Safe to keep.
+  # If you don't want extra surface area, remove this service.
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: emissions_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["tools"]
+
+  # ---------------------------------------------------------------------------
+  # Everything below is added by the candidate. The three services above are the
+  # provided file, unmodified.
+  # ---------------------------------------------------------------------------
+
+  # One-shot: applies migrations, then seeds demo data, then exits.
+  #
+  # Separate from the API rather than run at its boot, because N API replicas all
+  # migrating on startup is a race. Here it runs exactly once per `up`, and the
+  # API refuses to start until it has succeeded.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: emissions_migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-emissions}:${POSTGRES_PASSWORD:-emissions}@postgres:5432/${POSTGRES_DB:-emissions}
+    command: >
+      sh -c "node apps/api/dist/db/migrate.js && node apps/api/dist/db/seed.js"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: emissions_api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Inside the compose network Postgres is reachable by service name. The
+      # host-facing localhost:5432 mapping is irrelevant here — a common source
+      # of confusion when moving an app into compose.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-emissions}:${POSTGRES_PASSWORD:-emissions}@postgres:5432/${POSTGRES_DB:-emissions}
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001}
+      OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Start only after migrations and seeds have completed successfully. This
+      # is what makes a single `docker compose up` sufficient.
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the client bundle, so it must be reachable from the
+        # BROWSER — the published host port, not the compose service name.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    container_name: emissions_web
+    restart: unless-stopped
+    environment:
+      # Server Components run inside the network and use the service name.
+      API_URL_INTERNAL: http://api:3000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+    ports:
+      - "${WEB_PORT:-3001}:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  emissions_pg_data:
