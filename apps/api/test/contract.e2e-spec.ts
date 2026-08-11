@@ -143,6 +143,40 @@ describe('platform contract', () => {
     });
   });
 
+  describe('api root', () => {
+    it('describes the API surface', async () => {
+      const res = await h.http.get('/').expect(200);
+
+      expect(res.body.data).toMatchObject({
+        name: expect.any(String),
+        versions: { current: 'v2', supported: ['v1', 'v2'] },
+      });
+      expect(Object.keys(res.body.data.endpoints).length).toBeGreaterThan(0);
+    });
+
+    it('carries a request id, like every other route', async () => {
+      const res = await h.http.get('/').set('X-Request-Id', 'root-trace').expect(200);
+
+      expect(res.body.meta.requestId).toBe('root-trace');
+      expect(res.headers['x-request-id']).toBe('root-trace');
+    });
+  });
+
+  describe('unmatched routes', () => {
+    it('reports NOT_FOUND, not SITE_NOT_FOUND', async () => {
+      const res = await h.http.get('/no-such-route').expect(404);
+
+      // A missing route is not a missing site; the codes address different
+      // problems and a client should be able to tell them apart.
+      expect(res.body.error.code).toBe(ErrorCode.NOT_FOUND);
+    });
+
+    it('still carries a request id', async () => {
+      const res = await h.http.get('/no-such-route').expect(404);
+      expect(res.body.meta.requestId).not.toBe('unknown');
+    });
+  });
+
   describe('site listing order', () => {
     it('is stable across repeated reads', async () => {
       const reads = await Promise.all(

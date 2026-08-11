@@ -379,6 +379,34 @@ row's identity and lives as long as the measurement.
 `Date`, which does not. Irrelevant for methane telemetry (seconds to minutes); a
 producer above 1 kHz must send `readingId`.
 
+### Metrics are ephemeral, and nothing scrapes them
+
+Counters live in the process. A redeploy or restart resets them to zero, and
+because **no collector is deployed**, that history is not kept anywhere — today,
+a redeploy loses the metrics outright.
+
+With a Prometheus server scraping, the loss narrows but does not disappear:
+history lives in its TSDB, `rate()` and `increase()` recognise a counter reset
+rather than reading it as a negative rate, and
+`emissions_process_start_time_seconds` marks the restart. Events between the last
+scrape and the restart are still lost — typically 15–60 seconds' worth. That is
+an accepted trade in the pull model rather than a solved problem.
+
+Persisting counters in the application would mean shared state written on every
+increment, on the hot path, for no benefit; Prometheus assumes ephemeral targets
+by design.
+
+**The useful distinction is that a number needing to survive a restart is data,
+not a metric.** The counts that matter for integrity already are data:
+`ingestion_batches` records every accepted batch with its submitted and accepted
+totals, so Layer 2 duplicate readings are permanently recoverable in SQL. The two
+that are not — `idempotent_replay` and `key_reused` — write no row, and are
+diagnostic rather than authoritative. Making them durable would mean recording a
+row, not persisting a counter.
+
+Deploying a collector (Grafana Cloud's free tier can scrape the API directly) is
+infrastructure the brief does not ask for and is not set up here.
+
 ### Single-instance assumptions
 
 The metrics registry is in-process, so a scrape reflects one replica. The SSE
