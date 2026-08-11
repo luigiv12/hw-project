@@ -397,16 +397,73 @@ survives casual testing and then shows up in a regulatory total.
 
 ## 7. Platform conventions
 
-**Response envelope** — every response, success or failure, is
-`{ data, meta }` or `{ error, meta }`, applied by a global interceptor and
-exception filter rather than per controller. A guarantee each team must remember
-to opt into is not a guarantee.
+This section is written as a contract rather than a description: it is what a
+second team building alongside this service would implement to look like part of
+the same platform.
 
-Errors carry a machine-readable `code` from the shared contract, so the frontend
-branches on codes and message wording stays free to change. Unhandled failures
-return a generic message — an unhandled error can carry connection strings or row
-contents — with the real cause logged against the request id the client was
-shown.
+### The envelope
+
+Every response carries one of two shapes. There is no third.
+
+```jsonc
+{ "data": <payload>, "meta": { "requestId": "…", "timestamp": "…" } }
+{ "error": { "code": "…", "message": "…", "details": [] }, "meta": { … } }
+```
+
+Applied by a **global** interceptor and exception filter, never per controller.
+A guarantee each team has to remember to opt into is not a guarantee — this way
+no handler can ship a different shape, including handlers nobody has written yet.
+
+`data` is the payload and nothing else. Anything *about* the response — paging,
+timing, correlation — belongs in `meta`, so a field can be added to `meta`
+without changing the shape of any payload.
+
+### Errors
+
+- `code` is the contract; `message` is for humans. Clients branch on `code`, and
+  message wording stays free to change without it being a breaking change.
+- Codes live in `@emissions/contracts` with their HTTP status beside them in
+  `ERROR_STATUS`, so the code-to-status relationship exists in exactly one place.
+- `details` is populated for field-level failures as `{ path, message }[]`, and
+  is an empty array otherwise. It is never a free-text dumping ground.
+- Adding a code is backwards-compatible. Changing or removing one is not.
+- Unhandled failures return a generic message. An unhandled error can carry a
+  connection string or row contents, and the real cause is logged against the
+  request id the client was shown.
+
+### Collections
+
+Paginated endpoints take `?limit=&cursor=` and answer with the page details in
+`meta.page`:
+
+```jsonc
+{ "data": [ … ], "meta": { …, "page": { "limit": 50, "nextCursor": "…" } } }
+```
+
+- `limit` defaults to 50 and is capped at 200. An uncapped collection endpoint is
+  one request away from being a denial of service against itself.
+- **Cursors are keyset, not offsets.** An offset shifts when rows are inserted or
+  reordered between pages, silently skipping or repeating records; a cursor names
+  a position in the sort order and cannot. This requires a *total* ordering — one
+  with no ties — which is why site listing orders by `(name, id)`.
+- A cursor is opaque. Clients hand back what they were given and never construct
+  or parse one, which leaves the ordering free to change.
+- `nextCursor: null` means the last page. A malformed cursor is a
+  `VALIDATION_ERROR`, never a silent restart from the beginning.
+
+### Correlation
+
+`X-Request-Id` is honoured if supplied and generated otherwise, echoed as a
+response header, and included in every `meta` — including on errors and on routes
+that do not exist. A user reporting a failure can quote the id they were shown
+and have it match log lines exactly.
+
+### Deprecation
+
+An endpoint being retired answers with `Deprecation: true` and a `Link` header
+naming its successor, as `/v1/ingest` does. The old contract keeps working
+unchanged; discovery of the new one is in the response rather than in a document
+the client's author may never read.
 
 **Money is never a float.** Regulatory quantities are `numeric` in Postgres and
 **decimal strings on the wire**, never JSON numbers. Serialising through a
@@ -487,6 +544,34 @@ NOTHING`. Strictly stronger than the current index and would make it redundant,
 leaving one mechanism per case. Roughly 5–10 GB at 100M readings, hash
 partitionable by `site_id`. Not implemented: it closes a hole in a feature with
 no producers, and the time was better spent on the concurrency tests.
+
+### The error-code namespace is flat
+
+Codes are a single flat enum, which works while one team owns them. `NOT_FOUND`
+and `SITE_NOT_FOUND` already sit side by side; a second team adding a
+`NOT_FOUND` for its own domain would collide.
+
+A registry serving several teams wants namespacing — `sites.not_found`,
+`ingest.idempotency_key_reused` — or an owner recorded per code. Not done here
+because renaming the codes would churn the contract and its tests to serve a
+second team that does not exist yet, and the migration is mechanical whenever one
+does.
+
+### There is no machine-readable API document
+
+The contract is expressed as Zod schemas, which serve TypeScript consumers
+directly and are the reason the dashboard cannot drift from the API. A consumer
+in another language gets nothing from them.
+
+A standard several teams build against normally ships an OpenAPI document —
+`@nestjs/swagger` plus a Zod-to-OpenAPI bridge would generate one from the same
+schemas, keeping a single source of truth. Not built: no non-TypeScript consumer
+exists, and an OpenAPI document that nothing consumes is a second artifact to
+keep honest.
+
+Related: correlation uses `X-Request-Id`, which is ours. Tracing across service
+boundaries is standardised on W3C `traceparent`, and a multi-service deployment
+would want to accept and propagate it rather than invent a header.
 
 ### Writes to one site are serialised
 

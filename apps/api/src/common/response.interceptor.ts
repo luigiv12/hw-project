@@ -8,6 +8,7 @@ import type { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import type { SuccessEnvelope } from '@emissions/contracts';
 import { currentRequestId } from './request-context';
+import { Paginated } from './paginated';
 
 /**
  * Wraps every successful handler return value in the platform envelope.
@@ -20,20 +21,27 @@ import { currentRequestId } from './request-context';
  */
 @Injectable()
 export class ResponseInterceptor<T>
-  implements NestInterceptor<T, SuccessEnvelope<T>>
+  implements NestInterceptor<T, SuccessEnvelope<unknown>>
 {
   intercept(
     _ctx: ExecutionContext,
     next: CallHandler<T>,
-  ): Observable<SuccessEnvelope<T>> {
+  ): Observable<SuccessEnvelope<unknown>> {
     return next.handle().pipe(
-      map((data) => ({
-        data,
-        meta: {
+      map((value) => {
+        const meta = {
           requestId: currentRequestId(),
           timestamp: new Date().toISOString(),
-        },
-      })),
+        };
+
+        // A paginated handler returns its items and page details together; the
+        // items become `data` and the page details join `meta`.
+        if (value instanceof Paginated) {
+          return { data: value.items, meta: { ...meta, page: value.page } };
+        }
+
+        return { data: value, meta };
+      }),
     );
   }
 }

@@ -4,12 +4,14 @@ import {
   ComplianceStatus,
   ErrorCode,
   type CreateSiteInput,
+  type PaginationQuery,
   type Site,
   type SiteMetrics,
 } from '@emissions/contracts';
 import { DB, type Database } from '../db/db.module';
 import { measurements, sites, type SiteRow } from '../db/schema';
 import { AppException } from '../common/app.exception';
+import { Paginated, decodeCursor, encodeCursor } from '../common/paginated';
 
 @Injectable()
 export class SitesService {
@@ -29,21 +31,51 @@ export class SitesService {
   }
 
   /**
-   * All sites, in a total order.
+   * A page of sites, in a total order.
    *
    * `id` is a tiebreak rather than decoration: sites created in the same
    * transaction share a `created_at`, and any ordering with ties lets Postgres
    * return rows in whatever order the scan produces — which changes when a row
-   * is updated. The dashboard polls this endpoint continuously, so the order
-   * must not depend on write history.
+   * is updated. A stable total order is what makes keyset pagination correct as
+   * well as making the listing itself readable.
+   *
+   * Pages are fetched by sort key, not by offset. `(name, id) > (cursor)` is a
+   * row-value comparison that lands on an index and stays correct while rows are
+   * being inserted — where an offset would skip or repeat records as the
+   * collection shifts underneath it.
    */
-  async findAll(): Promise<Site[]> {
+  async findPage(query: PaginationQuery): Promise<Paginated<Site>> {
+    const after = query.cursor ? decodeCursor(query.cursor) : null;
+
+    if (query.cursor && !after) {
+      throw new AppException(
+        ErrorCode.VALIDATION_ERROR,
+        'The cursor is not valid. Pass a nextCursor from a previous response, or omit it to start from the beginning.',
+        [{ path: 'cursor', message: 'malformed' }],
+      );
+    }
+
+    // One extra row answers "is there another page?" without a second count
+    // query, and is discarded before the results are returned.
     const rows = await this.db
       .select()
       .from(sites)
-      .orderBy(asc(sites.name), asc(sites.id));
+      .where(
+        after
+          ? sql`(${sites.name}, ${sites.id}) > (${after.name}, ${after.id}::uuid)`
+          : undefined,
+      )
+      .orderBy(asc(sites.name), asc(sites.id))
+      .limit(query.limit + 1);
 
-    return rows.map(toSite);
+    const hasMore = rows.length > query.limit;
+    const page = hasMore ? rows.slice(0, query.limit) : rows;
+    const last = page.at(-1);
+
+    return new Paginated(page.map(toSite), {
+      limit: query.limit,
+      nextCursor: hasMore && last ? encodeCursor(last.name, last.id) : null,
+    });
   }
 
   async findOne(id: string): Promise<Site> {

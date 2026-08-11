@@ -7,16 +7,20 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
 import {
   createSiteSchema,
+  paginationQuerySchema,
   type CreateSiteInput,
+  type PaginationQuery,
   type Site,
   type SiteMetrics,
 } from '@emissions/contracts';
 import { SitesService } from './sites.service';
 import { ZodValidationPipe } from '../common/zod-validation.pipe';
+import type { Paginated } from '../common/paginated';
 
 /**
  * Site management and analytics.
@@ -42,8 +46,10 @@ export class SitesController {
   }
 
   @Get()
-  findAll(): Promise<Site[]> {
-    return this.sites.findAll();
+  findAll(
+    @Query(new ZodValidationPipe(paginationQuerySchema)) query: PaginationQuery,
+  ): Promise<Paginated<Site>> {
+    return this.sites.findPage(query);
   }
 
   @Get(':id')
