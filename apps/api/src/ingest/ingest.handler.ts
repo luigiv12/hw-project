@@ -190,6 +190,13 @@ export class IngestMeasurementsHandler
       const [delta] = await tx
         .select({
           kg: sql<string>`coalesce(sum(${measurements.ch4Kg}), 0)::text`,
+          /**
+           * The reading span of this batch, taken here while its rows are
+           * already being aggregated. Folded into the site's span below so the
+           * read path never needs an unbounded MIN/MAX over history.
+           */
+          firstTs: sql<Date | null>`min(${measurements.readingTs})`,
+          lastTs: sql<Date | null>`max(${measurements.readingTs})`,
         })
         .from(measurements)
         .where(eq(measurements.batchId, claimed.id));
@@ -202,6 +209,15 @@ export class IngestMeasurementsHandler
         .set({
           totalEmissionsToDateKg: sql`${sites.totalEmissionsToDateKg} + ${acceptedCh4Kg}::numeric`,
           measurementCount: sql`${sites.measurementCount} + ${readingsAccepted}`,
+
+          /**
+           * Widened, never overwritten — a backfill of older readings must move
+           * the start of the span backwards, and LEAST/GREATEST ignore NULLs so
+           * the first batch for a site sets both.
+           */
+          firstReadingAt: sql`least(${sites.firstReadingAt}, ${delta?.firstTs ?? null})`,
+          lastReadingAt: sql`greatest(${sites.lastReadingAt}, ${delta?.lastTs ?? null})`,
+
           version: sql`${sites.version} + 1`,
           updatedAt: new Date(),
         })

@@ -15,6 +15,13 @@
       "when": 1786500000000,
       "tag": "0001_reading_identity",
       "breakpoints": false
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786600000000,
+      "tag": "0002_site_reading_window",
+      "breakpoints": false
     }
   ]
 }

@@ -114,6 +114,14 @@ async function main(): Promise<void> {
           metadata: site.metadata,
           totalEmissionsToDateKg: totalKg.toFixed(4),
           measurementCount: rows.length,
+          firstReadingAt: rows.reduce(
+            (a, r) => (r.ts < a ? r.ts : a),
+            rows[0].ts,
+          ),
+          lastReadingAt: rows.reduce(
+            (a, r) => (r.ts > a ? r.ts : a),
+            rows[0].ts,
+          ),
           version: rows.length,
         });
 

@@ -98,15 +98,12 @@ export class SitesService {
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const [window] = await this.db
-      .select({
-        last24hCh4Kg: sql<string>`coalesce(sum(${measurements.ch4Kg}), 0)::text`,
-        firstReadingAt: sql<Date | null>`min(${measurements.readingTs})`,
-        lastReadingAt: sql<Date | null>`max(${measurements.readingTs})`,
-      })
-      .from(measurements)
-      .where(eq(measurements.siteId, id));
-
+    /**
+     * The only aggregate on this path, and it is bounded by `reading_ts`, so
+     * Postgres prunes to the one or two partitions the window spans. The
+     * cumulative total, the row count, and the reading span all come from the
+     * site row, maintained transactionally by ingest.
+     */
     const [recent] = await this.db
       .select({
         sumKg: sql<string>`coalesce(sum(${measurements.ch4Kg}), 0)::text`,
@@ -131,12 +128,8 @@ export class SitesService {
       ),
       utilizationPct: Number(((totalKg / limitKg) * 100).toFixed(2)),
       last24hCh4Kg: recent?.sumKg ?? '0',
-      firstReadingAt: window?.firstReadingAt
-        ? new Date(window.firstReadingAt).toISOString()
-        : null,
-      lastReadingAt: window?.lastReadingAt
-        ? new Date(window.lastReadingAt).toISOString()
-        : null,
+      firstReadingAt: site.firstReadingAt?.toISOString() ?? null,
+      lastReadingAt: site.lastReadingAt?.toISOString() ?? null,
     };
   }
 
