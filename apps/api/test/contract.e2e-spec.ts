@@ -71,10 +71,9 @@ describe('platform contract', () => {
       await h.ingest(site.id, [reading({ ch4Kg: '100.0000' })]);
 
       /**
-       * The boundary case. The brief's wording is "Limit Exceeded", which
-       * requires strictly greater — a site at exactly its permitted total has
-       * not breached. Comparison is exact decimal, not float, because this is
-       * the value a regulator sees.
+       * The boundary case. "Limit Exceeded" requires strictly greater — a
+       * site at exactly its permitted total has not breached. Comparison is
+       * exact decimal, not float, because this is the value a regulator sees.
        */
       const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
       expect(res.body.data.complianceStatus).toBe(ComplianceStatus.WITHIN_LIMIT);
@@ -89,7 +88,7 @@ describe('platform contract', () => {
       expect(res.body.data.complianceStatus).toBe(ComplianceStatus.LIMIT_EXCEEDED);
     });
 
-    it('uses the exact field names and strings the brief specifies', async () => {
+    it('names the site id consistently with the sites endpoint', async () => {
       const site = await h.createSite('50.000');
       const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
 

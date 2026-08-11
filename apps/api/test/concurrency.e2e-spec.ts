@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Harness, decimal, reading, result } from './harness';
 
 /**
- * The evidence for the brief's central claim.
+ * The evidence for this system's central claim.
  *
  * Everything else in this suite checks a rule in isolation; these two check that
  * the rules survive ten writers arriving at once. They are written to be read —
@@ -99,6 +99,46 @@ describe('concurrency', () => {
     expect(result(b.body).idempotentReplay).toBe(false);
 
     await h.expectReconciled(site.id, '25', 1);
+  });
+
+  /**
+   * Headroom. Correctness under concurrency should hold well above the load the
+   * earlier cases exercise, not merely at it.
+   */
+  it('stays exact with 50 concurrent distinct batches on one site', async () => {
+    const site = await h.createSite();
+
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, (_, i) =>
+        h.ingest(
+          site.id,
+          Array.from({ length: 10 }, (_, k) =>
+            reading({
+              deviceId: `LOAD-${i}`,
+              readingTs: new Date(Date.UTC(2026, 4, 1, 0, k)).toISOString(),
+              ch4Kg: '1.0000',
+            }),
+          ),
+          randomUUID(),
+        ),
+      ),
+    );
+
+    expect(responses.every((r) => r.status === 200)).toBe(true);
+    await h.expectReconciled(site.id, '500', 500);
+  });
+
+  it('applies one batch when 50 identical requests arrive at once', async () => {
+    const site = await h.createSite();
+    const key = randomUUID();
+    const batch = [reading({ deviceId: 'LOAD-SAME', ch4Kg: '100.0000' })];
+
+    const responses = await Promise.all(
+      Array.from({ length: 50 }, () => h.ingest(site.id, batch, key)),
+    );
+
+    expect(responses.filter((r) => !result(r.body).idempotentReplay)).toHaveLength(1);
+    await h.expectReconciled(site.id, '100', 1);
   });
 
   it('keeps the site summary in step with its measurements under mixed load', async () => {

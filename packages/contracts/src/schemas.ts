@@ -29,7 +29,7 @@ import { z } from 'zod';
  * the database column exists to avoid.
  */
 
-/** Spec: "Accept a batch of methane readings (up to 100 entries) for a specific site." */
+/** Maximum readings accepted in one ingest request. */
 export const MAX_BATCH_SIZE = 100;
 
 /** Spec uses these exact strings for compliance status — do not reword. */

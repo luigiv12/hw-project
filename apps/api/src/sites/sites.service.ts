@@ -128,8 +128,7 @@ export class SitesService {
  * Compared as decimal strings via BigInt rather than as JS numbers: this is the
  * boundary that decides whether a site is reported as in breach, and it should
  * not depend on binary floating-point rounding. A site exactly at its limit is
- * *within* it — the spec's language is "Limit Exceeded", which requires strictly
- * greater.
+ * *within* it — "Limit Exceeded" requires strictly greater.
  */
 export function complianceFor(
   totalKg: string,
