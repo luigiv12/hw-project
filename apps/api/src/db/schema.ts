@@ -85,6 +85,18 @@ export const measurements = pgTable(
   {
     id: uuid('id').notNull().defaultRandom(),
     siteId: uuid('site_id').notNull(),
+
+    /**
+     * The batch this reading arrived in, and the key the ingest transaction sums
+     * over to compute how much the site total should move.
+     *
+     * Deliberately **not** a foreign key. Batch records identify a delivery
+     * attempt and are expected to be expired on a retention policy; measurements
+     * are permanent regulatory records. A foreign key would tie those lifetimes
+     * together — either blocking the expiry or, with a cascade, deleting
+     * measurements when idempotency keys are pruned. The looser reference is the
+     * safer of the two failure modes.
+     */
     batchId: uuid('batch_id').notNull(),
 
     /**

@@ -614,6 +614,19 @@ attempt*, not a permanent entity. Production wants range partitioning on
 `created_at` with a retention policy. `readingId` has no such option; it is the
 row's identity and lives as long as the measurement.
 
+That expected retention is why **`measurements.batch_id` is not a foreign key**.
+A batch record is transient; a measurement is a permanent regulatory record.
+Constraining one to the other would mean either blocking the expiry or, with a
+cascade, deleting measurements when idempotency keys are pruned — losing
+emissions data in order to tidy up delivery bookkeeping. A dangling `batch_id`
+after expiry is the better of the two failure modes, and the column is
+`NOT NULL` so a reading always records which batch delivered it.
+
+The cost is that referential integrity here is a convention rather than a
+constraint, so nothing stops a writer inventing a `batch_id`. Ingest cannot: it
+sums the delta over the batch id it just claimed, so an invented one would sum
+to zero and move no total.
+
 ### Timestamp resolution is milliseconds
 
 `timestamptz` holds microseconds, but ingest converts through a JavaScript
