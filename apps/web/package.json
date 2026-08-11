@@ -6,7 +6,9 @@
     "build": "pnpm --filter @emissions/contracts build && next build",
     "dev": "next dev --port 3001",
     "start": "next start --port 3001",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@emissions/contracts": "workspace:*",
@@ -16,9 +18,15 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
     "@types/node": "^24.9.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "typescript": "^5.9.3"
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

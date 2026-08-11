@@ -2,7 +2,7 @@
   "name": "emissions-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "Emissions Ingestion & Analytics Engine — Highwood engineering challenge",
+  "description": "Emissions Ingestion & Analytics Engine \u2014 Highwood engineering challenge",
   "engines": {
     "node": ">=24 <25",
     "pnpm": ">=11"
@@ -11,13 +11,23 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
+    "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "db:migrate": "pnpm --filter @emissions/api db:migrate",
     "db:seed": "pnpm --filter @emissions/api db:seed",
     "db:verify": "pnpm --filter @emissions/api db:verify",
     "infra:up": "docker compose up -d postgres redis",
     "infra:down": "docker compose down",
-    "infra:reset": "docker compose down -v && docker compose up -d postgres redis"
+    "infra:reset": "docker compose down -v && docker compose up -d postgres redis",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@next/eslint-plugin-next": "^16.3.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.67.0"
   }
 }

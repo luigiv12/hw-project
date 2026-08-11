@@ -169,7 +169,9 @@ Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 ## Tests
 
 ```bash
-pnpm test          # 90 tests, ~5s
+pnpm test          # 106 tests: 90 API, 16 dashboard
+pnpm lint          # eslint across the workspace
+pnpm typecheck     # every package
 ```
 
 Runs against the compose Postgres — no mocks, because what is under test
@@ -203,7 +205,9 @@ cd apps/web && pnpm dev                 # :3001
 
 | Script | |
 |---|---|
-| `pnpm test` | full suite |
+| `pnpm test` | full suite — API and dashboard |
+| `pnpm lint` / `lint:fix` | eslint across the workspace |
+| `pnpm format` | prettier |
 | `pnpm db:migrate` | apply migrations |
 | `pnpm db:seed` | reset demo data |
 | `pnpm db:verify` | reconcile summaries against measurements |

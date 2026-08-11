@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  IngestInput,
   IngestResult,
   Site,
   SiteMetrics,
@@ -58,14 +59,18 @@ export class NetworkError extends Error {
   }
 }
 
-type Envelope<T> =
-  | { data: T; meta: { requestId: string; timestamp: string } }
-  | { error: ApiError; meta: { requestId: string; timestamp: string } };
+type Meta = {
+  requestId: string;
+  timestamp: string;
+  page?: { limit: number; nextCursor: string | null };
+};
+
+type Envelope<T> = { data: T; meta: Meta } | { error: ApiError; meta: Meta };
 
 async function request<T>(
   path: string,
   init?: RequestInit,
-): Promise<{ value: T; headers: Headers }> {
+): Promise<{ value: T; meta: Meta; headers: Headers }> {
   let res: Response;
 
   try {
@@ -93,26 +98,42 @@ async function request<T>(
     );
   }
 
-  return { value: body.data, headers: res.headers };
+  return { value: body.data, meta: body.meta, headers: res.headers };
 }
 
+/** Matches the API's cap, so a full listing costs as few round trips as possible. */
+const PAGE_SIZE = 200;
+
+/**
+ * Every site, following the cursor to the end.
+ *
+ * The dashboard shows a complete picture of the estate, so it walks all pages
+ * rather than displaying whichever ones happened to fit in the first response.
+ * The loop is bounded: a client that trusts a server to eventually return a null
+ * cursor is one bug away from spinning forever.
+ */
 export async function listSites(): Promise<Site[]> {
-  return (await request<Site[]>('/sites')).value;
+  const sites: Site[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 0; page < 100; page++) {
+    const path: string = cursor
+      ? `/sites?limit=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`
+      : `/sites?limit=${PAGE_SIZE}`;
+
+    const res: { value: Site[]; meta: Meta } = await request<Site[]>(path);
+    sites.push(...res.value);
+
+    cursor = res.meta.page?.nextCursor ?? null;
+    if (!cursor) return sites;
+  }
+
+  return sites;
 }
 
 export async function getSiteMetrics(id: string): Promise<SiteMetrics> {
   return (await request<SiteMetrics>(`/sites/${id}/metrics`)).value;
 }
-
-export type IngestPayload = {
-  siteId: string;
-  readings: {
-    deviceId: string;
-    readingTs: string;
-    ch4Kg: string;
-    source: 'sensor' | 'satellite' | 'manual';
-  }[];
-};
 
 /**
  * Submits a batch.
@@ -123,7 +144,7 @@ export type IngestPayload = {
  * not to the transport.
  */
 export async function ingest(
-  payload: IngestPayload,
+  payload: IngestInput,
   idempotencyKey: string,
 ): Promise<{ result: IngestResult; replayed: boolean }> {
   const { value, headers } = await request<IngestResult>('/v2/ingest', {
