@@ -29,12 +29,49 @@ import type {
  * NEXT_PUBLIC_* is inlined into the client bundle at build time, so it must be
  * the browser-reachable URL.
  */
-export const API_BASE =
-  typeof window === 'undefined'
-    ? (process.env.API_URL_INTERNAL ??
-      process.env.NEXT_PUBLIC_API_URL ??
-      'http://localhost:3000')
-    : (process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000');
+const DEV_FALLBACK = 'http://localhost:3000';
+
+/**
+ * `localhost` is the right default for `pnpm dev` and a dangerous one anywhere
+ * else. Inlined into a production bundle it produces a dashboard that reaches
+ * for the *viewer's* machine — the page renders, because server rendering uses
+ * a different variable and succeeds, and then the browser raises a local-network
+ * permission prompt that looks like the site is doing something untoward.
+ *
+ * So the fallback applies only outside production. A production build without
+ * the variable fails here, where the message can say what to set, rather than
+ * shipping something that silently cannot reach its API.
+ *
+ * This throws at module evaluation, which for `NEXT_PUBLIC_*` means during the
+ * build — the point at which the value is inlined, and the last point at which
+ * anyone can fix it.
+ */
+function resolveApiBase(): string {
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Server Components run inside the deployment and may use a private address;
+  // the browser cannot, so it only ever gets the public one.
+  const serverUrl = process.env.API_URL_INTERNAL ?? process.env.NEXT_PUBLIC_API_URL;
+  const browserUrl = process.env.NEXT_PUBLIC_API_URL;
+
+  const configured = typeof window === 'undefined' ? serverUrl : browserUrl;
+
+  if (configured) return configured;
+
+  if (isProduction) {
+    throw new Error(
+      'NEXT_PUBLIC_API_URL is not set. A production build must be told where the ' +
+        'API lives — it is inlined into the browser bundle, so setting it after ' +
+        'the build has no effect and the deployment must be rebuilt. Set it (and ' +
+        'API_URL_INTERNAL, if Server Components reach the API by a different ' +
+        'address) and redeploy.',
+    );
+  }
+
+  return DEV_FALLBACK;
+}
+
+export const API_BASE = resolveApiBase();
 
 export class ApiRequestError extends Error {
   constructor(
