@@ -102,7 +102,7 @@ sequenceDiagram
     P-->>A: committed, +100 kg
     A--xD: reply lost in transit
 
-    Note over D: Indistinguishable from<br/>"never arrived". Must retry.
+    Note over D: Indistinguishable from "never arrived" — must retry
 
     D->>A: POST /v2/ingest (same key K)
     A->>P: INSERT batch ON CONFLICT DO NOTHING
@@ -205,36 +205,37 @@ Anything Layer 2 rejected is excluded automatically, and the addition is exact
 
 ```mermaid
 flowchart TD
-    REQ["POST /v2/ingest<br/>Idempotency-Key: K"] --> LOCK
+    REQ["POST /v2/ingest + Idempotency-Key"] --> LOCK
 
-    subgraph TX["ONE transaction — all of this commits together, or none of it does"]
+    subgraph TX["ONE transaction — all of it commits, or none of it does"]
         direction TB
-        LOCK["1 · SELECT site … FOR UPDATE<br/><i>serialises writers for this site</i>"]
-        CLAIM["2 · INSERT batch<br/>ON CONFLICT DO NOTHING RETURNING"]
-        INS["3 · INSERT readings<br/>ON CONFLICT DO NOTHING RETURNING"]
-        DELTA["4 · delta = SUM ch4_kg WHERE batch_id = this<br/><b>computed from rows that landed,<br/>not from the payload</b>"]
-        UPD["5 · UPDATE site SET total = total + delta"]
+        LOCK["1 · SELECT site FOR UPDATE"]
+        CLAIM["2 · INSERT batch, ON CONFLICT DO NOTHING"]
+        INS["3 · INSERT readings, ON CONFLICT DO NOTHING"]
+        DELTA["4 · delta = SUM ch4_kg for this batch_id"]
+        UPD["5 · UPDATE site: total = total + delta"]
         OBX["6 · INSERT outbox event"]
-        FIN["7 · UPDATE batch → completed,<br/>store response snapshot"]
+        FIN["7 · UPDATE batch to completed, store snapshot"]
 
         LOCK --> CLAIM
-        CLAIM -->|row returned<br/>this request owns the batch| INS
+        CLAIM -->|claimed| INS
         INS --> DELTA --> UPD --> OBX --> FIN
     end
 
-    LOCK -.->|site missing| E404["404 SITE_NOT_FOUND"]
-    CLAIM -.->|no row: duplicate key| DUP{"request_hash<br/>matches?"}
-    DUP -.->|no| E409["409 IDEMPOTENCY_KEY_REUSED<br/><i>same key, different batch — a client bug</i>"]
-    DUP -.->|yes| REPLAY["200 replay stored snapshot<br/>X-Idempotent-Replay: true"]
-    FIN --> OK["200 with the new totals"]
+    LOCK -.->|no such site| E404["404 SITE_NOT_FOUND"]
+    CLAIM -.->|duplicate key| DUP{"request_hash matches?"}
+    DUP -.->|no| E409["409 IDEMPOTENCY_KEY_REUSED"]
+    DUP -.->|yes| REPLAY["200 replay of stored snapshot"]
+    FIN --> OK["200 with new totals"]
 ```
 
-Two things the picture makes plain that the prose has to spell out. **Everything
-is inside one boundary** — measurements, summary, batch record and outbox event
-become visible together or not at all. And **step 4 is where the no-double-count
-guarantee actually lives**: the summary moves by what the database accepted, so
-anything Layer 2 rejected is excluded without the application having to reason
-about it.
+Step 1 serialises writers for that site. Step 4 is the one that matters: the
+delta is summed from the rows that actually landed, so anything step 3 rejected
+is excluded without the application reasoning about it.
+
+**Everything is inside one boundary** — measurements, summary, batch record and
+outbox event become visible together or not at all. That is what makes the
+guarantee a property of the database rather than of the code's control flow.
 
 ### Honest note on the overlap
 
