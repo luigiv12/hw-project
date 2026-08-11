@@ -143,7 +143,14 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 
 .hint { font-size: 12px; color: var(--text-dim); margin-top: 5px; }
 .mono { font-family: var(--mono); font-size: 12px; }
-.reading-row { display: grid; grid-template-columns: 1fr 1fr 110px auto; gap: 8px; margin-bottom: 8px; align-items: end; }
+/* readingId | deviceId | timestamp | kg | remove */
+.reading-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.3fr 100px auto;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: end;
+}
 .reading-row button { padding: 8px 11px; }
 .stack { display: flex; flex-direction: column; gap: 18px; }
 /*
@@ -186,6 +193,6 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   background: var(--ok);
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .reading-row { grid-template-columns: 1fr 1fr; }
 }

@@ -6,7 +6,14 @@
     "moduleResolution": "node",
     "outDir": "./dist",
     "baseUrl": "./",
-    "rootDir": "./src",
+
+    /**
+     * No `rootDir` here on purpose. This config covers src *and* test so the
+     * editor and `pnpm typecheck` see both; pinning rootDir to ./src makes
+     * every test file an error. The build uses tsconfig.build.json, which
+     * excludes tests and therefore infers ./src as the root, keeping the output
+     * at dist/main.js.
+     */
 
     // NestJS dependency injection reads constructor parameter types at runtime
     // from metadata the compiler emits. Without these two flags DI resolves
