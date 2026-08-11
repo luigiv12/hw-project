@@ -30,9 +30,89 @@ Drizzle over Prisma because the ingest path depends on emitting *specific* SQL �
 `ON CONFLICT DO NOTHING`, `SELECT … FOR UPDATE`, `FOR UPDATE SKIP LOCKED` — and
 an ORM that abstracts those away would be working against the graded content.
 
+### Data model
+
+The constraints are the design. Everything in §2 is a consequence of these four
+tables and, in particular, of the two **partial** unique indexes on
+`measurements` — which are mutually exclusive, so exactly one governs any given
+row.
+
+```mermaid
+erDiagram
+    sites ||--o{ ingestion_batches : "one per accepted batch"
+    sites ||--o{ measurements : "one per reading"
+    ingestion_batches ||--o{ measurements : "batch_id"
+
+    sites {
+        uuid id PK
+        numeric emission_limit_kg "exact decimal, never float"
+        numeric total_emissions_to_date_kg "denormalised, maintained in the ingest tx"
+        bigint measurement_count "denormalised"
+        int version "change token for readers, NOT the concurrency control"
+    }
+
+    ingestion_batches {
+        uuid id PK
+        uuid site_id FK
+        text idempotency_key "UNIQUE(site_id, idempotency_key) - layer 1"
+        text request_hash "sha256 of the canonicalised payload"
+        text status "in_progress | completed | failed"
+        jsonb response_snapshot "replayed verbatim on retry"
+    }
+
+    measurements {
+        uuid id "PK is (id, reading_ts) - partition key must be included"
+        uuid site_id FK
+        uuid batch_id FK "the delta is summed over this"
+        text reading_id "UNIQUE(site_id, reading_id, reading_ts) WHERE NOT NULL"
+        text device_id "UNIQUE(site_id, device_id, reading_ts) WHERE reading_id IS NULL"
+        timestamptz reading_ts "RANGE partition key, monthly"
+        numeric ch4_kg "exact decimal"
+    }
+
+    outbox {
+        bigserial id PK
+        text event_type "measurements.ingested | site.limit_exceeded"
+        jsonb payload
+        timestamptz published_at "NULL until delivered; partial index on this"
+    }
+```
+
+Both `measurements` indexes contain `reading_ts` because Postgres requires the
+partition key in every unique constraint on a partitioned table. That
+requirement is the cause of the `readingId` limitation in §9.
+
 ---
 
 ## 2. The core problem: counting each emission exactly once
+
+The situation the whole design exists for. A device cannot distinguish "my
+request never arrived" from "it arrived and the reply was lost", so it must
+retry — and the second delivery must not be counted:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Field device
+    participant A as API
+    participant P as Postgres
+
+    D->>A: POST /v2/ingest (Idempotency-Key: K)
+    A->>P: BEGIN … COMMIT
+    P-->>A: committed, +100 kg
+    A--xD: reply lost in transit
+
+    Note over D: Indistinguishable from<br/>"never arrived". Must retry.
+
+    D->>A: POST /v2/ingest (same key K)
+    A->>P: INSERT batch ON CONFLICT DO NOTHING
+    P-->>A: no row — already claimed
+    A->>P: SELECT response_snapshot
+    P-->>A: the original response
+    A-->>D: 200, X-Idempotent-Replay: true
+
+    Note over P: total still +100 kg, not +200
+```
 
 Two failure modes, and they pull in opposite directions:
 
@@ -120,6 +200,41 @@ UPDATE sites SET total_emissions_to_date_kg = total_emissions_to_date_kg + $delt
 where `$delta` is `SUM(ch4_kg)` over rows carrying this batch's `batch_id`.
 Anything Layer 2 rejected is excluded automatically, and the addition is exact
 `numeric` rather than float64.
+
+### The transaction, end to end
+
+```mermaid
+flowchart TD
+    REQ["POST /v2/ingest<br/>Idempotency-Key: K"] --> LOCK
+
+    subgraph TX["ONE transaction — all of this commits together, or none of it does"]
+        direction TB
+        LOCK["1 · SELECT site … FOR UPDATE<br/><i>serialises writers for this site</i>"]
+        CLAIM["2 · INSERT batch<br/>ON CONFLICT DO NOTHING RETURNING"]
+        INS["3 · INSERT readings<br/>ON CONFLICT DO NOTHING RETURNING"]
+        DELTA["4 · delta = SUM ch4_kg WHERE batch_id = this<br/><b>computed from rows that landed,<br/>not from the payload</b>"]
+        UPD["5 · UPDATE site SET total = total + delta"]
+        OBX["6 · INSERT outbox event"]
+        FIN["7 · UPDATE batch → completed,<br/>store response snapshot"]
+
+        LOCK --> CLAIM
+        CLAIM -->|row returned<br/>this request owns the batch| INS
+        INS --> DELTA --> UPD --> OBX --> FIN
+    end
+
+    LOCK -.->|site missing| E404["404 SITE_NOT_FOUND"]
+    CLAIM -.->|no row: duplicate key| DUP{"request_hash<br/>matches?"}
+    DUP -.->|no| E409["409 IDEMPOTENCY_KEY_REUSED<br/><i>same key, different batch — a client bug</i>"]
+    DUP -.->|yes| REPLAY["200 replay stored snapshot<br/>X-Idempotent-Replay: true"]
+    FIN --> OK["200 with the new totals"]
+```
+
+Two things the picture makes plain that the prose has to spell out. **Everything
+is inside one boundary** — measurements, summary, batch record and outbox event
+become visible together or not at all. And **step 4 is where the no-double-count
+guarantee actually lives**: the summary moves by what the database accepted, so
+anything Layer 2 rejected is excluded without the application having to reason
+about it.
 
 ### Honest note on the overlap
 
