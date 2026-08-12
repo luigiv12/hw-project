@@ -18,6 +18,14 @@ import type { IngestInput } from '@emissions/contracts';
 export function hashIngestRequest(input: IngestInput): string {
   const readings = [...input.readings]
     .map((r) => ({
+      /**
+       * `readingId` is part of the fingerprint because it is the *identity* of
+       * a reading when supplied. Two batches differing only by their reading ids
+       * describe different measurements, and hashing them identically would
+       * classify the second as a retry — replaying a response that claims its
+       * readings were stored when they were not.
+       */
+      i: r.readingId ?? '',
       // Timestamps are normalised to epoch millis so that equivalent ISO-8601
       // spellings of the same instant — differing offsets, trailing 'Z' versus
       // '+00:00' — hash identically.
@@ -29,7 +37,11 @@ export function hashIngestRequest(input: IngestInput): string {
       s: r.source,
     }))
     .sort(
-      (a, b) => a.d.localeCompare(b.d) || a.t - b.t || a.c.localeCompare(b.c),
+      (a, b) =>
+        a.i.localeCompare(b.i) ||
+        a.d.localeCompare(b.d) ||
+        a.t - b.t ||
+        a.c.localeCompare(b.c),
     );
 
   const canonical = JSON.stringify({ siteId: input.siteId, readings });

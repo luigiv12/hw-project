@@ -136,16 +136,44 @@ export class IngestMeasurementsHandler
       }
 
       /**
-       * Step 3 — insert the readings.
+       * Step 3a — readings whose identity scheme straddles what is already
+       * stored.
+       *
+       * A reading carrying `readingId` that matches a stored reading on
+       * (site, device, instant) which has none. The two unique indexes are
+       * partial and mutually exclusive, so the database permits both rows to
+       * exist — and that is exactly what happens when a device which previously
+       * omitted `readingId` is upgraded and replays its buffer. Left alone the
+       * same physical reading is stored twice and the site total advances again.
+       *
+       * It cannot be resolved here: only the producer knows whether it
+       * re-identified an existing reading or genuinely took a second one at that
+       * instant. So these are excluded from the insert and reported. A duplicated
+       * regulatory total is the worse of the two errors, and a reading held back
+       * can be re-sent once its identity is unambiguous.
+       */
+      const straddling = await this.findStraddlingIdentities(tx, input);
+      const straddlingKeys = new Set(
+        straddling.map((c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`),
+      );
+
+      const toInsert = input.readings.filter(
+        (r) =>
+          !straddlingKeys.has(`${r.deviceId}|${new Date(r.readingTs).getTime()}`),
+      );
+
+      /**
+       * Step 3b — insert the readings.
        *
        * ON CONFLICT DO NOTHING against the natural key. `returning` yields only
        * the rows that were genuinely new; anything already present under an
        * earlier batch is silently skipped.
        */
-      const inserted = await tx
+      const inserted = toInsert.length
+        ? await tx
         .insert(measurements)
         .values(
-          input.readings.map((r) => ({
+          toInsert.map((r) => ({
             siteId: input.siteId,
             batchId: claimed.id,
             readingId: r.readingId ?? null,
@@ -160,7 +188,8 @@ export class IngestMeasurementsHandler
           deviceId: measurements.deviceId,
           readingTs: measurements.readingTs,
           readingId: measurements.readingId,
-        });
+        })
+        : [];
 
       const readingsAccepted = inserted.length;
 
@@ -173,11 +202,14 @@ export class IngestMeasurementsHandler
        * a silently dropped reading understates a regulatory total, and unlike a
        * double-count nothing downstream will ever contradict it.
        */
-      const conflicts = await this.findValueConflicts(
-        tx,
-        input,
-        new Set(inserted.map((r) => identityOf(r))),
-      );
+      const conflicts = [
+        ...straddling,
+        ...(await this.findValueConflicts(
+          tx,
+          { ...input, readings: toInsert },
+          new Set(inserted.map((r) => identityOf(r))),
+        )),
+      ];
 
       /**
        * Step 4 — the delta, computed by Postgres from the rows that landed.
@@ -346,6 +378,59 @@ export class IngestMeasurementsHandler
       }
 
       return result;
+    });
+  }
+
+  /**
+   * Readings carrying a `readingId` that collide, on (site, device, instant),
+   * with a stored reading that has none.
+   *
+   * These are the one case the partial indexes cannot adjudicate: each row
+   * satisfies a different index, so both may exist, and the same physical
+   * measurement would be counted twice.
+   */
+  private async findStraddlingIdentities(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    input: IngestMeasurementsCommand['input'],
+  ): Promise<IngestResult['conflicts']> {
+    const identified = input.readings.filter((r) => r.readingId);
+    if (identified.length === 0) return [];
+
+    const stored = await tx
+      .select({
+        deviceId: measurements.deviceId,
+        readingTs: measurements.readingTs,
+        ch4Kg: measurements.ch4Kg,
+      })
+      .from(measurements)
+      .where(
+        and(
+          eq(measurements.siteId, input.siteId),
+          isNull(measurements.readingId),
+          or(
+            ...identified.map((r) =>
+              and(
+                eq(measurements.deviceId, r.deviceId),
+                eq(measurements.readingTs, new Date(r.readingTs)),
+              ),
+            ),
+          ),
+        ),
+      );
+
+    return stored.map((s) => {
+      const submitted = identified.find(
+        (r) =>
+          r.deviceId === s.deviceId &&
+          new Date(r.readingTs).getTime() === s.readingTs.getTime(),
+      );
+
+      return {
+        deviceId: s.deviceId,
+        readingTs: s.readingTs.toISOString(),
+        submittedCh4Kg: submitted?.ch4Kg ?? '0',
+        storedCh4Kg: s.ch4Kg,
+      };
     });
   }
 

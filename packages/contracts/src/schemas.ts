@@ -60,7 +60,21 @@ export const createSiteSchema = z.object({
    */
   emissionLimitKg: z
     .string()
-    .regex(/^\d+(\.\d{1,3})?$/, 'expected a positive decimal with up to 3dp'),
+    /**
+     * Bounded to what the column can hold. `numeric(14, 3)` has eleven digits
+     * left of the point, and a value beyond it fails inside Postgres — which
+     * surfaces as a 500 for input the API should have rejected as a 400.
+     */
+    .regex(
+      /^\d{1,11}(\.\d{1,3})?$/,
+      'expected a decimal with up to 11 integer digits and 3dp',
+    )
+    /**
+     * Zero is rejected here as well as by a CHECK constraint. A site with a zero
+     * limit is permanently in breach and makes utilisation infinite; the
+     * constraint is the backstop, this is the error the caller can act on.
+     */
+    .refine((v) => Number(v) > 0, 'must be greater than zero'),
   /** Free-form operator metadata: operator, basin, equipment tag, and so on. */
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
@@ -125,19 +139,68 @@ export const readingSchema = z.object({
   readingTs: z.iso.datetime({ offset: true }),
   ch4Kg: z
     .string()
-    .regex(/^\d+(\.\d{1,4})?$/, 'expected a non-negative decimal with up to 4dp'),
+    // `numeric(14, 4)` leaves ten digits left of the point. Beyond that Postgres
+    // raises a numeric overflow, which would reach the caller as a 500.
+    .regex(
+      /^\d{1,10}(\.\d{1,4})?$/,
+      'expected a non-negative decimal with up to 10 integer digits and 4dp',
+    ),
   source: z.enum(['sensor', 'satellite', 'manual']).default('sensor'),
 });
 
 export type Reading = z.infer<typeof readingSchema>;
 
-export const ingestSchema = z.object({
-  siteId: z.uuid(),
-  readings: z
-    .array(readingSchema)
-    .min(1)
-    .max(MAX_BATCH_SIZE, `a batch may carry at most ${MAX_BATCH_SIZE} readings`),
-});
+/**
+ * The identity a reading de-duplicates on: the producer's `readingId` when
+ * supplied, otherwise (device, instant). Mirrors the two partial unique indexes
+ * on `measurements`; the prefix keeps the namespaces from colliding.
+ */
+function readingIdentity(r: Reading): string {
+  return r.readingId
+    ? `rid:${r.readingId}`
+    : `dev:${r.deviceId}|${new Date(r.readingTs).getTime()}`;
+}
+
+export const ingestSchema = z
+  .object({
+    siteId: z.uuid(),
+    readings: z
+      .array(readingSchema)
+      .min(1)
+      .max(MAX_BATCH_SIZE, `a batch may carry at most ${MAX_BATCH_SIZE} readings`),
+  })
+  .superRefine((batch, ctx) => {
+    /**
+     * A batch must not carry two readings with the same identity.
+     *
+     * The database would silently keep one and drop the other, and the caller
+     * would be told the batch was accepted — the mass of the discarded reading
+     * simply never appears in the total. There is no correct way to resolve the
+     * ambiguity server-side: only the producer knows whether it meant to send
+     * one measurement or two, and if two, that it needs to distinguish them with
+     * `readingId`.
+     */
+    const seen = new Map<string, number>();
+
+    batch.readings.forEach((reading, index) => {
+      const identity = readingIdentity(reading);
+      const first = seen.get(identity);
+
+      if (first === undefined) {
+        seen.set(identity, index);
+        return;
+      }
+
+      ctx.addIssue({
+        code: 'custom',
+        path: ['readings', index],
+        message:
+          `duplicate reading identity within the batch (also at index ${first}). ` +
+          'Two readings from one device at the same instant must each carry a ' +
+          'distinct readingId, or one of them will be discarded.',
+      });
+    });
+  });
 
 export type IngestInput = z.infer<typeof ingestSchema>;
 

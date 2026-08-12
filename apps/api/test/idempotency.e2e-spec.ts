@@ -177,6 +177,104 @@ describe('idempotency', () => {
     });
   });
 
+  describe('identity is part of what makes a batch the same batch', () => {
+    it('rejects a key reused for readings that differ only by readingId', async () => {
+      const site = await h.createSite();
+      const key = randomUUID();
+      const base = { deviceId: 'HASH', readingTs: '2026-08-09T01:00:00.000Z', ch4Kg: '10.0000' };
+
+      await h.ingest(site.id, [reading({ ...base, readingId: 'A' })], key);
+
+      /**
+       * readingId IS the identity when supplied, so these are different
+       * measurements. Treating the second as a retry would replay a response
+       * claiming its reading was stored, and reading B would be lost with the
+       * caller told otherwise.
+       */
+      const second = await h.ingest(
+        site.id,
+        [reading({ ...base, readingId: 'B' })],
+        key,
+      );
+
+      expect(second.status).toBe(409);
+      expect(second.body.error.code).toBe(ErrorCode.IDEMPOTENCY_KEY_REUSED);
+      await h.expectReconciled(site.id, '10', 1);
+    });
+
+    it('rejects a batch carrying two readings with the same identity', async () => {
+      const site = await h.createSite();
+      const at = '2026-08-09T02:00:00.000Z';
+
+      // The database would keep one and drop the other while reporting success.
+      // Only the producer can say whether it meant one measurement or two.
+      const res = await h.ingest(site.id, [
+        reading({ deviceId: 'INTRA', readingTs: at, ch4Kg: '10.0000' }),
+        reading({ deviceId: 'INTRA', readingTs: at, ch4Kg: '20.0000' }),
+      ]);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(res.body.error.details[0].message).toMatch(/duplicate reading identity/i);
+      await h.expectReconciled(site.id, '0', 0);
+    });
+
+    it('allows the same instant when the readings are distinctly identified', async () => {
+      const site = await h.createSite();
+      const at = '2026-08-09T03:00:00.000Z';
+
+      const res = await h.ingest(site.id, [
+        reading({ readingId: 'x1', deviceId: 'OK', readingTs: at, ch4Kg: '10.0000' }),
+        reading({ readingId: 'x2', deviceId: 'OK', readingTs: at, ch4Kg: '20.0000' }),
+      ]);
+
+      expect(res.status).toBe(200);
+      await h.expectReconciled(site.id, '30', 2);
+    });
+
+    it('does not double count when a device starts supplying readingId', async () => {
+      const site = await h.createSite();
+      const at = '2026-08-09T04:00:00.000Z';
+
+      await h.ingest(site.id, [
+        reading({ deviceId: 'UPGRADE', readingTs: at, ch4Kg: '50.0000' }),
+      ]);
+
+      /**
+       * The two partial indexes are mutually exclusive, so the database would
+       * accept both rows. Only the producer knows whether this is the same
+       * reading re-identified or a genuinely new one, so it is held back and
+       * reported rather than guessed at.
+       */
+      const replay = await h.ingest(site.id, [
+        reading({ readingId: 'up-1', deviceId: 'UPGRADE', readingTs: at, ch4Kg: '50.0000' }),
+      ]);
+
+      expect(result(replay.body).readingsAccepted).toBe(0);
+      expect(result(replay.body).conflicts).toHaveLength(1);
+      await h.expectReconciled(site.id, '50', 1);
+    });
+  });
+
+  describe('input is bounded before it reaches the database', () => {
+    it.each([
+      ['zero limit', { name: 'z', emissionLimitKg: '0' }],
+      ['limit beyond the column', { name: 'z', emissionLimitKg: '999999999999' }],
+    ])('rejects %s with 400, not 500', async (_label, body) => {
+      const res = await h.http.post('/v2/sites').send(body);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
+
+    it('rejects a mass beyond the column with 400, not 500', async () => {
+      const site = await h.createSite();
+      const res = await h.ingest(site.id, [reading({ ch4Kg: '99999999999.0' })]);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+    });
+  });
+
   describe('reading identity', () => {
     it('stores two readings at the same instant when the producer says they differ', async () => {
       const site = await h.createSite();
