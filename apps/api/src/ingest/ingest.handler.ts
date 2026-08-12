@@ -7,12 +7,7 @@ import {
   type IngestResult,
 } from '@emissions/contracts';
 import { DB, type Database } from '../db/db.module';
-import {
-  ingestionBatches,
-  measurements,
-  outbox,
-  sites,
-} from '../db/schema';
+import { ingestionBatches, measurements, outbox, sites } from '../db/schema';
 import { AppException } from '../common/app.exception';
 import { hashIngestRequest } from '../common/canonical-hash';
 import { compareDecimalStrings } from '../common/decimal';
@@ -38,9 +33,10 @@ function identityOf(r: {
 }
 
 @CommandHandler(IngestMeasurementsCommand)
-export class IngestMeasurementsHandler
-  implements ICommandHandler<IngestMeasurementsCommand, IngestResult>
-{
+export class IngestMeasurementsHandler implements ICommandHandler<
+  IngestMeasurementsCommand,
+  IngestResult
+> {
   private readonly logger = new Logger(IngestMeasurementsHandler.name);
 
   constructor(
@@ -136,30 +132,34 @@ export class IngestMeasurementsHandler
       }
 
       /**
-       * Step 3a — readings whose identity scheme straddles what is already
-       * stored.
+       * Step 3a — readings arriving with an identity they did not have before.
        *
        * A reading carrying `readingId` that matches a stored reading on
-       * (site, device, instant) which has none. The two unique indexes are
-       * partial and mutually exclusive, so the database permits both rows to
-       * exist — and that is exactly what happens when a device which previously
-       * omitted `readingId` is upgraded and replays its buffer. Left alone the
-       * same physical reading is stored twice and the site total advances again.
+       * (site, device, instant) which has none. Each obeys a different partial
+       * index — one covers rows without a reading id, the other rows with one —
+       * so neither sees a conflict and the database stores both. That is exactly
+       * what happens when a device which previously omitted `readingId` is
+       * upgraded and replays its buffer: every reading lands a second time and
+       * the site total advances again.
        *
-       * It cannot be resolved here: only the producer knows whether it
-       * re-identified an existing reading or genuinely took a second one at that
-       * instant. So these are excluded from the insert and reported. A duplicated
-       * regulatory total is the worse of the two errors, and a reading held back
-       * can be re-sent once its identity is unambiguous.
+       * It cannot be resolved here. Only the producer knows whether it
+       * re-identified a reading it had already sent or genuinely took a second
+       * one at that instant. These are therefore excluded from the insert and
+       * reported: a duplicated regulatory total is the worse of the two errors,
+       * and a reading held back can be re-sent once its identity is unambiguous.
        */
-      const straddling = await this.findStraddlingIdentities(tx, input);
-      const straddlingKeys = new Set(
-        straddling.map((c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`),
+      const reIdentified = await this.findReIdentifiedReadings(tx, input);
+      const reIdentifiedKeys = new Set(
+        reIdentified.map(
+          (c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`,
+        ),
       );
 
       const toInsert = input.readings.filter(
         (r) =>
-          !straddlingKeys.has(`${r.deviceId}|${new Date(r.readingTs).getTime()}`),
+          !reIdentifiedKeys.has(
+            `${r.deviceId}|${new Date(r.readingTs).getTime()}`,
+          ),
       );
 
       /**
@@ -171,24 +171,24 @@ export class IngestMeasurementsHandler
        */
       const inserted = toInsert.length
         ? await tx
-        .insert(measurements)
-        .values(
-          toInsert.map((r) => ({
-            siteId: input.siteId,
-            batchId: claimed.id,
-            readingId: r.readingId ?? null,
-            deviceId: r.deviceId,
-            readingTs: new Date(r.readingTs),
-            ch4Kg: r.ch4Kg,
-            source: r.source,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({
-          deviceId: measurements.deviceId,
-          readingTs: measurements.readingTs,
-          readingId: measurements.readingId,
-        })
+            .insert(measurements)
+            .values(
+              toInsert.map((r) => ({
+                siteId: input.siteId,
+                batchId: claimed.id,
+                readingId: r.readingId ?? null,
+                deviceId: r.deviceId,
+                readingTs: new Date(r.readingTs),
+                ch4Kg: r.ch4Kg,
+                source: r.source,
+              })),
+            )
+            .onConflictDoNothing()
+            .returning({
+              deviceId: measurements.deviceId,
+              readingTs: measurements.readingTs,
+              readingId: measurements.readingId,
+            })
         : [];
 
       const readingsAccepted = inserted.length;
@@ -203,7 +203,7 @@ export class IngestMeasurementsHandler
        * double-count nothing downstream will ever contradict it.
        */
       const conflicts = [
-        ...straddling,
+        ...reIdentified,
         ...(await this.findValueConflicts(
           tx,
           { ...input, readings: toInsert },
@@ -308,7 +308,10 @@ export class IngestMeasurementsHandler
           site.emissionLimitKg,
         ) <= 0;
 
-      if (wasWithinLimit && complianceStatus === ComplianceStatus.LIMIT_EXCEEDED) {
+      if (
+        wasWithinLimit &&
+        complianceStatus === ComplianceStatus.LIMIT_EXCEEDED
+      ) {
         await tx.insert(outbox).values({
           aggregateType: 'site',
           aggregateId: input.siteId,
@@ -382,14 +385,14 @@ export class IngestMeasurementsHandler
   }
 
   /**
-   * Readings carrying a `readingId` that collide, on (site, device, instant),
-   * with a stored reading that has none.
+   * Readings that carry a `readingId` and match a stored reading, on
+   * (site, device, instant), which has none.
    *
-   * These are the one case the partial indexes cannot adjudicate: each row
-   * satisfies a different index, so both may exist, and the same physical
-   * measurement would be counted twice.
+   * The one case the partial indexes cannot adjudicate: each row satisfies a
+   * different index, so both may exist and the same physical measurement would
+   * be counted twice.
    */
-  private async findStraddlingIdentities(
+  private async findReIdentifiedReadings(
     tx: Parameters<Parameters<Database['transaction']>[0]>[0],
     input: IngestMeasurementsCommand['input'],
   ): Promise<IngestResult['conflicts']> {
@@ -491,7 +494,9 @@ export class IngestMeasurementsHandler
         ),
       );
 
-    const storedByIdentity = new Map(stored.map((s) => [identityOf(s), s.ch4Kg]));
+    const storedByIdentity = new Map(
+      stored.map((s) => [identityOf(s), s.ch4Kg]),
+    );
 
     const conflicts: IngestResult['conflicts'] = [];
 
