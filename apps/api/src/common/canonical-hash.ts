@@ -19,11 +19,14 @@ export function hashIngestRequest(input: IngestInput): string {
   const readings = [...input.readings]
     .map((r) => ({
       /**
-       * `readingId` is part of the fingerprint because it is the *identity* of
-       * a reading when supplied. Two batches differing only by their reading ids
-       * describe different measurements, and hashing them identically would
-       * classify the second as a retry — replaying a response that claims its
-       * readings were stored when they were not.
+       * Included because a supplied `readingId` *is* the reading's identity.
+       *
+       * Two readings can match on device, instant and mass and still be separate
+       * measurements — distinct reading ids are the producer stating exactly
+       * that. So a batch is not the same batch merely because its values match;
+       * omitting the ids here would let a second, genuinely different batch hash
+       * identically to the first, be classified as a retry, and have a response
+       * replayed claiming its readings were stored when none of them were.
        */
       i: r.readingId ?? '',
       // Timestamps are normalised to epoch millis so that equivalent ISO-8601
