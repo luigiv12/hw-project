@@ -113,7 +113,14 @@ break a containerised Next.js app. Keeping both here means the local and
 deployed configurations have the same shape.
 
 Because `NEXT_PUBLIC_*` is baked at build time, **changing it requires a
-redeploy**, not just a variable update.
+redeploy**, not just a variable update. Saving the variable and reloading the
+page does nothing.
+
+A production build without `NEXT_PUBLIC_API_URL` **fails** rather than falling
+back to `localhost`. That fallback exists for `pnpm dev`; inlined into a
+deployed bundle it produces a dashboard reaching for the *viewer's* machine,
+which renders correctly at first paint — server rendering uses the other
+variable — and then raises a local-network permission prompt in the browser.
 
 ---
 
