@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gte, sql } from 'drizzle-orm';
 import {
-  ComplianceStatus,
   ErrorCode,
   type CreateSiteInput,
   type PaginationQuery,
@@ -12,6 +11,7 @@ import { DB, type Database } from '../db/db.module';
 import { measurements, sites, type SiteRow } from '../db/schema';
 import { AppException } from '../common/app.exception';
 import { Paginated, decodeCursor, encodeCursor } from '../common/paginated';
+import { complianceFor } from '../common/compliance';
 
 @Injectable()
 export class SitesService {
@@ -145,35 +145,6 @@ export class SitesService {
 
     return row;
   }
-}
-
-/**
- * Compliance comparison.
- *
- * Compared as decimal strings via BigInt rather than as JS numbers: this is the
- * boundary that decides whether a site is reported as in breach, and it should
- * not depend on binary floating-point rounding. A site exactly at its limit is
- * *within* it — "Limit Exceeded" requires strictly greater.
- */
-export function complianceFor(
-  totalKg: string,
-  limitKg: string,
-): ComplianceStatus {
-  return compareDecimalStrings(totalKg, limitKg) > 0
-    ? ComplianceStatus.LIMIT_EXCEEDED
-    : ComplianceStatus.WITHIN_LIMIT;
-}
-
-/** Returns >0 if a > b, 0 if equal, <0 if a < b. Exact for decimal strings. */
-export function compareDecimalStrings(a: string, b: string): number {
-  const [aInt, aFrac = ''] = a.split('.');
-  const [bInt, bFrac = ''] = b.split('.');
-
-  const width = Math.max(aFrac.length, bFrac.length);
-  const aScaled = BigInt(aInt + aFrac.padEnd(width, '0'));
-  const bScaled = BigInt(bInt + bFrac.padEnd(width, '0'));
-
-  return aScaled === bScaled ? 0 : aScaled > bScaled ? 1 : -1;
 }
 
 function toSite(row: SiteRow): Site {
