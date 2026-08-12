@@ -1,9 +1,10 @@
 import { ComplianceStatus } from '@emissions/contracts';
-import { compareDecimalStrings, complianceFor } from './sites.service';
+import { compareDecimalStrings } from './decimal';
+import { complianceFor } from './compliance';
 import {
   hashIngestRequest,
   normaliseDecimal,
-} from '../common/canonical-hash';
+} from './canonical-hash';
 import { gramsToKilogramsExact } from '@emissions/contracts';
 
 /**

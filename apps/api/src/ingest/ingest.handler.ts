@@ -15,7 +15,8 @@ import {
 } from '../db/schema';
 import { AppException } from '../common/app.exception';
 import { hashIngestRequest } from '../common/canonical-hash';
-import { compareDecimalStrings, complianceFor } from '../sites/sites.service';
+import { compareDecimalStrings } from '../common/decimal';
+import { complianceFor } from '../common/compliance';
 import { MetricsService } from '../observability/metrics.service';
 import { IngestMeasurementsCommand } from './ingest.command';
 
