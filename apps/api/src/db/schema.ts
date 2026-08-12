@@ -253,6 +253,17 @@ export const outbox = pgTable(
       .notNull()
       .defaultNow(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
+
+    /**
+     * When a dispatcher last took this row for delivery.
+     *
+     * Delivery happens outside the claiming transaction, so a row lock cannot
+     * cover it. This is the claim made durable: rows stamped within the lease
+     * window are skipped by other dispatchers, and a lapsed stamp means the
+     * claimer died and the row is retryable.
+     */
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+
     attempts: integer('attempts').notNull().default(0),
     lastError: text('last_error'),
   },

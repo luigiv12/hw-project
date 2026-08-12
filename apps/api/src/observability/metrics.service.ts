@@ -66,13 +66,27 @@ export class MetricsService {
   });
 
   /**
-   * Unpublished outbox rows. The single most useful number for spotting that
-   * the dispatcher has stalled: a backlog that climbs monotonically means events
-   * are being written and never delivered.
+   * Unpublished outbox rows still eligible for delivery. The single most useful
+   * number for spotting that the dispatcher has stalled: a backlog that climbs
+   * monotonically means events are being written and never delivered.
    */
   private readonly outboxPending = new Gauge({
     name: 'emissions_outbox_pending',
     help: 'Outbox events awaiting delivery',
+    registers: [this.registry],
+  });
+
+  /**
+   * Rows that exhausted their retries and are no longer claimed automatically.
+   *
+   * Separate from pending because it is a different alert: pending climbing
+   * means delivery is stalled and may recover on its own, while this is a
+   * standing count of events that will not move until someone intervenes. Any
+   * non-zero value warrants a look.
+   */
+  private readonly outboxDeadLettered = new Gauge({
+    name: 'emissions_outbox_dead_lettered',
+    help: 'Outbox events that exhausted their delivery attempts and need manual attention',
     registers: [this.registry],
   });
 
@@ -114,6 +128,10 @@ export class MetricsService {
 
   setOutboxPending(n: number): void {
     this.outboxPending.set(n);
+  }
+
+  setOutboxDeadLettered(n: number): void {
+    this.outboxDeadLettered.set(n);
   }
 
   render(): Promise<string> {

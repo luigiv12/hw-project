@@ -25,6 +25,8 @@ export const ErrorCode = {
    * retry after a short delay; the in-flight request will produce the response.
    */
   BATCH_IN_PROGRESS: 'BATCH_IN_PROGRESS',
+  /** Credentials are missing or wrong on an endpoint that requires them. */
+  UNAUTHORIZED: 'UNAUTHORIZED',
   /** Too many requests from this client. */
   RATE_LIMITED: 'RATE_LIMITED',
   /** Unhandled server-side failure. */
@@ -41,6 +43,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   [ErrorCode.BATCH_TOO_LARGE]: 400,
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 409,
   [ErrorCode.BATCH_IN_PROGRESS]: 409,
+  [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.INTERNAL_ERROR]: 500,
 };

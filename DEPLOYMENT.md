@@ -48,16 +48,32 @@ migrating on startup is a race. A pre-deploy step runs once per deployment.
 ### Variables
 
 ```
-DATABASE_URL     ${{Postgres.DATABASE_URL}}     # Railway reference, not a literal
-NODE_ENV         production
-PORT             3000
-CORS_ORIGINS     https://<your-app>.vercel.app  # exact origin, no trailing slash
-LOG_LEVEL        info
-OUTBOX_POLL_MS   1000
+DATABASE_URL      ${{Postgres.DATABASE_URL}}     # Railway reference, not a literal
+NODE_ENV          production
+PORT              3000
+CORS_ORIGINS      https://<your-app>.vercel.app  # exact origin, no trailing slash
+LOG_LEVEL         info
+OUTBOX_POLL_MS    1000
+TRUST_PROXY_HOPS  1
 ```
 
 `CORS_ORIGINS` is a chicken-and-egg: you will not know the Vercel URL until
 step 3. Deploy with a placeholder, then come back and set it.
+
+**`TRUST_PROXY_HOPS` matters more than it looks.** Railway terminates TLS at its
+edge, so every request reaches the app from the same internal address. Rate
+limiting buckets by client IP, so without this the entire internet shares one
+bucket — the limiter still fires, but as a global cap, and one noisy caller
+throttles every other client. Railway is exactly one hop, hence `1`.
+
+It defaults to `0` because trusting a hop that is not there is the worse mistake:
+any caller could then set `X-Forwarded-For` and be metered as whatever address
+they chose. Set it to the real hop count, not to `true`.
+
+**`METRICS_TOKEN` is optional and left unset here.** It gates `/metrics` behind a
+bearer token when present. The demo deployment wants the endpoint curl-able —
+the README points reviewers at it — so it stays open, and the app logs a warning
+at boot to say so. Set it for anything that is not a demo.
 
 Then **Settings → Networking → Generate Domain** for a public URL.
 
