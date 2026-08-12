@@ -135,18 +135,17 @@ export class IngestMeasurementsHandler implements ICommandHandler<
        * Step 3a — readings arriving with an identity they did not have before.
        *
        * A reading carrying `readingId` that matches a stored reading on
-       * (site, device, instant) which has none. Each obeys a different partial
-       * index — one covers rows without a reading id, the other rows with one —
-       * so neither sees a conflict and the database stores both. That is exactly
-       * what happens when a device which previously omitted `readingId` is
-       * upgraded and replays its buffer: every reading lands a second time and
-       * the site total advances again.
+       * (site, device, instant) which has none. The two partial indexes cover
+       * disjoint sets of rows, so neither adjudicates this pair — it is the one
+       * collision storage cannot decide. A device upgraded to supply `readingId`
+       * and replaying its buffer produces exactly this.
        *
-       * It cannot be resolved here. Only the producer knows whether it
-       * re-identified a reading it had already sent or genuinely took a second
-       * one at that instant. These are therefore excluded from the insert and
-       * reported: a duplicated regulatory total is the worse of the two errors,
-       * and a reading held back can be re-sent once its identity is unambiguous.
+       * Only the producer knows whether it re-identified a reading it had
+       * already sent or took a second one at that instant, so these are withheld
+       * from the insert and returned in `conflicts`. Withholding is the safer
+       * direction: a reading held back can be re-sent once its identity is
+       * unambiguous, where a duplicated regulatory total has nothing downstream
+       * to contradict it.
        */
       const reIdentified = await this.findReIdentifiedReadings(tx, input);
       const reIdentifiedKeys = new Set(
@@ -202,14 +201,15 @@ export class IngestMeasurementsHandler implements ICommandHandler<
        * a silently dropped reading understates a regulatory total, and unlike a
        * double-count nothing downstream will ever contradict it.
        */
-      const conflicts = [
-        ...reIdentified,
-        ...(await this.findValueConflicts(
-          tx,
-          { ...input, readings: toInsert },
-          new Set(inserted.map((r) => identityOf(r))),
-        )),
-      ];
+      const valueConflicts = await this.findValueConflicts(
+        tx,
+        { ...input, readings: toInsert },
+        new Set(inserted.map((r) => identityOf(r))),
+      );
+
+      // Merged for the response — the caller resolves both the same way — but
+      // kept apart above so each is counted and logged under its own reason.
+      const conflicts = [...reIdentified, ...valueConflicts];
 
       /**
        * Step 4 — the delta, computed by Postgres from the rows that landed.
@@ -365,13 +365,29 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         );
       }
 
-      if (conflicts.length > 0) {
-        this.metrics.recordDuplicate('value_conflict', conflicts.length);
+      if (reIdentified.length > 0) {
+        this.metrics.recordDuplicate('re_identified', reIdentified.length);
         this.logger.warn(
-          `batch ${claimed.id}: ${conflicts.length} reading(s) collided with a stored ` +
+          `batch ${claimed.id}: ${reIdentified.length} reading(s) arrived with a readingId ` +
+            `matching a stored reading that has none, and were NOT stored. ` +
+            `If this is the same reading re-identified, it is already counted; ` +
+            `if it is a new one, re-send it at a distinct timestamp. ` +
+            reIdentified
+              .map(
+                (c) =>
+                  `${c.deviceId}@${c.readingTs} submitted=${c.submittedCh4Kg} stored=${c.storedCh4Kg}`,
+              )
+              .join('; '),
+        );
+      }
+
+      if (valueConflicts.length > 0) {
+        this.metrics.recordDuplicate('value_conflict', valueConflicts.length);
+        this.logger.warn(
+          `batch ${claimed.id}: ${valueConflicts.length} reading(s) collided with a stored ` +
             `reading carrying a different mass and were NOT stored. ` +
             `The producer should send readingId. ` +
-            conflicts
+            valueConflicts
               .map(
                 (c) =>
                   `${c.deviceId}@${c.readingTs} submitted=${c.submittedCh4Kg} stored=${c.storedCh4Kg}`,

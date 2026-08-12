@@ -171,14 +171,12 @@ export const ingestSchema = z
   })
   .superRefine((batch, ctx) => {
     /**
-     * A batch must not carry two readings with the same identity.
+     * A batch carries at most one reading per identity.
      *
-     * The database would silently keep one and drop the other, and the caller
-     * would be told the batch was accepted — the mass of the discarded reading
-     * simply never appears in the total. There is no correct way to resolve the
-     * ambiguity server-side: only the producer knows whether it meant to send
-     * one measurement or two, and if two, that it needs to distinguish them with
-     * `readingId`.
+     * Storage keeps one row per identity, so a batch containing two is asking
+     * for something that cannot be represented. Only the producer can resolve
+     * it — either the readings are one measurement, or they are two and need
+     * distinct `readingId`s.
      */
     const seen = new Map<string, number>();
 

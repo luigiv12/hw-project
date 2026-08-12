@@ -89,7 +89,8 @@ export class MetricsService {
       | 'idempotent_replay'
       | 'key_reused'
       | 'duplicate_reading'
-      | 'value_conflict',
+      | 'value_conflict'
+      | 're_identified',
     count = 1,
   ): void {
     this.duplicates.inc({ reason }, count);

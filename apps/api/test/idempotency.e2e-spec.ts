@@ -246,6 +246,8 @@ describe('idempotency', () => {
        * reading re-identified or a genuinely new one, so it is held back and
        * reported rather than guessed at.
        */
+      const before = await h.duplicateCount('re_identified');
+
       const replay = await h.ingest(site.id, [
         reading({ readingId: 'up-1', deviceId: 'UPGRADE', readingTs: at, ch4Kg: '50.0000' }),
       ]);
@@ -253,6 +255,15 @@ describe('idempotency', () => {
       expect(result(replay.body).readingsAccepted).toBe(0);
       expect(result(replay.body).conflicts).toHaveLength(1);
       await h.expectReconciled(site.id, '50', 1);
+
+      /**
+       * Counted under its own reason, not folded into `value_conflict`. The two
+       * are diagnosed differently — this one says a producer changed how it
+       * identifies readings, which is a fleet event rather than a bad batch —
+       * and the masses here are identical, so `value_conflict` would describe it
+       * inaccurately as well as imprecisely.
+       */
+      expect(await h.duplicateCount('re_identified')).toBe(before + 1);
     });
   });
 
