@@ -211,15 +211,16 @@ flowchart TD
         direction TB
         LOCK["1 · SELECT site FOR UPDATE"]
         CLAIM["2 · INSERT batch, ON CONFLICT DO NOTHING"]
-        INS["3 · INSERT readings, ON CONFLICT DO NOTHING"]
+        REID["3a · find re-identified readings, withhold them"]
+        INS["3b · INSERT readings, ON CONFLICT DO NOTHING"]
         DELTA["4 · delta = SUM ch4_kg for this batch_id"]
         UPD["5 · UPDATE site: total = total + delta"]
         OBX["6 · INSERT outbox event"]
         FIN["7 · UPDATE batch to completed, store snapshot"]
 
         LOCK --> CLAIM
-        CLAIM -->|claimed| INS
-        INS --> DELTA --> UPD --> OBX --> FIN
+        CLAIM -->|claimed| REID
+        REID --> INS --> DELTA --> UPD --> OBX --> FIN
     end
 
     LOCK -.->|no such site| E404["404 SITE_NOT_FOUND"]
@@ -230,8 +231,13 @@ flowchart TD
 ```
 
 Step 1 serialises writers for that site. Step 4 is the one that matters: the
-delta is summed from the rows that actually landed, so anything step 3 rejected
+delta is summed from the rows that actually landed, so anything step 3b rejected
 is excluded without the application reasoning about it.
+
+Step 3a runs **before** the insert, not after. It withholds readings the schema
+cannot adjudicate (see *When neither layer can decide*), so they are never stored
+and never reach the sum — checking afterwards would report a conflict for a row
+already counted.
 
 **Everything is inside one boundary** — measurements, summary, batch record and
 outbox event become visible together or not at all. That is what makes the
@@ -254,15 +260,40 @@ this document does not claim they are.
 
 ### When neither layer can decide
 
-A collision whose stored mass **differs** is not a retry — a true retry resends
-identical values. It means two distinct measurements are competing for one
-identity and one was not stored. Those are logged, counted as
-`emissions_ingest_duplicate_total{reason="value_conflict"}`, and returned in the
-response's `conflicts[]`.
+Two cases reach the server as genuinely ambiguous. Both are withheld from the
+insert and returned in the response's `conflicts[]` rather than guessed at.
 
-This is the "lost packet" half of the brief taken seriously: silently discarding
-a measurement understates a regulatory total, and unlike a double-count nothing
-downstream will ever contradict it.
+**A collision carrying a different mass.** A true retry resends identical values,
+so a differing mass is not a retry — two distinct measurements are competing for
+one identity and one was not stored. Counted as
+`emissions_ingest_duplicate_total{reason="value_conflict"}`.
+
+**A reading arriving with an identity it did not have before.** A reading
+carrying `readingId` that matches a stored reading on `(site, device, timestamp)`
+which has none. The two partial indexes cover disjoint sets of rows — one only
+sees rows without a reading id, the other only rows with one — so neither
+adjudicates this pair and the database would accept both. A device upgraded to
+supply `readingId`, replaying its buffer, produces exactly this shape. Counted as
+`emissions_ingest_duplicate_total{reason="re_identified"}`.
+
+Both resolve the same way, and for the same reason: only the producer knows
+whether this is one measurement or two, and withholding is the recoverable
+direction. A reading held back can be re-sent once its identity is unambiguous;
+a duplicated regulatory total has nothing downstream to contradict it.
+
+That asymmetry is the "lost packet" half of the brief taken seriously — silently
+discarding a measurement understates a total just as surely as counting one
+twice, and is the harder of the two to ever notice.
+
+**How speculative this is, stated plainly.** The value-conflict case is ordinary
+and will happen. The re-identification case is narrow: it needs a producer that
+was already sending readings, then starts supplying `readingId`, and replays
+across the changeover. It costs a `SELECT` before the insert on every batch. It
+is implemented rather than documented-only because it is the one collision the
+schema cannot adjudicate, and the failure mode is a silent double-count of a
+regulatory figure. A reviewer who considers it over-built for the brief is not
+wrong — the cost is one query and one branch, and it would be the first thing to
+cut.
 
 ---
 
@@ -534,9 +565,12 @@ partition key into every uniqueness guarantee built on that table.** Any identit
 enforced there is implicitly scoped to a partition key value, and it is easy to
 miss because the index looks correct in isolation.
 
-**Exposure today is nil** — `readingId` is optional and no current producer sends
-one. The realistic future trigger is firmware that stamps at *send* time rather
-than *sample* time, so retries carry fresh timestamps.
+**Exposure today is small.** `readingId` is optional, and the automated producers
+— v1 sensors and the seed — do not send one; only the dashboard's manual ingest
+form can. Reaching the hole requires re-sending one id under a changed timestamp,
+which a human filling a form will not do by accident. The realistic future
+trigger is firmware that stamps at *send* time rather than *sample* time, so
+retries carry fresh timestamps.
 
 **The fix, if needed:** a non-partitioned `measurement_identities (site_id,
 reading_id)` table written in the ingest transaction with `ON CONFLICT DO

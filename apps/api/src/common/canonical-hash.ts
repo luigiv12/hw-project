@@ -18,6 +18,12 @@ import type { IngestInput } from '@emissions/contracts';
 export function hashIngestRequest(input: IngestInput): string {
   const readings = [...input.readings]
     .map((r) => ({
+      /**
+       * A supplied `readingId` is the reading's identity, so it participates in
+       * the fingerprint. Readings matching on device, instant and mass are still
+       * separate measurements when their ids differ.
+       */
+      i: r.readingId ?? '',
       // Timestamps are normalised to epoch millis so that equivalent ISO-8601
       // spellings of the same instant — differing offsets, trailing 'Z' versus
       // '+00:00' — hash identically.
@@ -29,7 +35,11 @@ export function hashIngestRequest(input: IngestInput): string {
       s: r.source,
     }))
     .sort(
-      (a, b) => a.d.localeCompare(b.d) || a.t - b.t || a.c.localeCompare(b.c),
+      (a, b) =>
+        a.i.localeCompare(b.i) ||
+        a.d.localeCompare(b.d) ||
+        a.t - b.t ||
+        a.c.localeCompare(b.c),
     );
 
   const canonical = JSON.stringify({ siteId: input.siteId, readings });

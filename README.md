@@ -169,7 +169,7 @@ Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 ## Tests
 
 ```bash
-pnpm test          # 106 tests: 90 API, 16 dashboard
+pnpm test          # 122 tests: 106 API, 16 dashboard
 pnpm lint          # eslint across the workspace
 pnpm typecheck     # every package
 ```

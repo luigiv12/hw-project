@@ -134,6 +134,25 @@ export class Harness {
     return { kg: row?.kg ?? '0', count: row?.count ?? 0 };
   }
 
+  /**
+   * Current value of `emissions_ingest_duplicate_total` for one reason label,
+   * scraped from the exposition endpoint. Zero when the label has not been
+   * emitted yet — a counter has no series until first incremented.
+   *
+   * Read as a delta across an action rather than as an absolute: the registry is
+   * process-wide, so every earlier test in the run has contributed to it.
+   */
+  async duplicateCount(reason: string): Promise<number> {
+    const res = await this.http.get('/metrics');
+    const line = res.text
+      .split('\n')
+      .find((l) =>
+        l.startsWith(`emissions_ingest_duplicate_total{reason="${reason}"}`),
+      );
+
+    return line ? Number(line.trim().split(/\s+/).pop()) : 0;
+  }
+
   /** Asserts the summary and the raw rows agree, and match what was expected. */
   async expectReconciled(siteId: string, expectedKg: string, expectedCount: number) {
     const stored = await this.storedTotal(siteId);

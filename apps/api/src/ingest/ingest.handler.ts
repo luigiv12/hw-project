@@ -7,12 +7,7 @@ import {
   type IngestResult,
 } from '@emissions/contracts';
 import { DB, type Database } from '../db/db.module';
-import {
-  ingestionBatches,
-  measurements,
-  outbox,
-  sites,
-} from '../db/schema';
+import { ingestionBatches, measurements, outbox, sites } from '../db/schema';
 import { AppException } from '../common/app.exception';
 import { hashIngestRequest } from '../common/canonical-hash';
 import { compareDecimalStrings } from '../common/decimal';
@@ -38,9 +33,10 @@ function identityOf(r: {
 }
 
 @CommandHandler(IngestMeasurementsCommand)
-export class IngestMeasurementsHandler
-  implements ICommandHandler<IngestMeasurementsCommand, IngestResult>
-{
+export class IngestMeasurementsHandler implements ICommandHandler<
+  IngestMeasurementsCommand,
+  IngestResult
+> {
   private readonly logger = new Logger(IngestMeasurementsHandler.name);
 
   constructor(
@@ -136,31 +132,63 @@ export class IngestMeasurementsHandler
       }
 
       /**
-       * Step 3 — insert the readings.
+       * Step 3a — readings arriving with an identity they did not have before.
+       *
+       * A reading carrying `readingId` that matches a stored reading on
+       * (site, device, instant) which has none. The two partial indexes cover
+       * disjoint sets of rows, so neither adjudicates this pair — it is the one
+       * collision storage cannot decide. A device upgraded to supply `readingId`
+       * and replaying its buffer produces exactly this.
+       *
+       * Only the producer knows whether it re-identified a reading it had
+       * already sent or took a second one at that instant, so these are withheld
+       * from the insert and returned in `conflicts`. Withholding is the safer
+       * direction: a reading held back can be re-sent once its identity is
+       * unambiguous, where a duplicated regulatory total has nothing downstream
+       * to contradict it.
+       */
+      const reIdentified = await this.findReIdentifiedReadings(tx, input);
+      const reIdentifiedKeys = new Set(
+        reIdentified.map(
+          (c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`,
+        ),
+      );
+
+      const toInsert = input.readings.filter(
+        (r) =>
+          !reIdentifiedKeys.has(
+            `${r.deviceId}|${new Date(r.readingTs).getTime()}`,
+          ),
+      );
+
+      /**
+       * Step 3b — insert the readings.
        *
        * ON CONFLICT DO NOTHING against the natural key. `returning` yields only
        * the rows that were genuinely new; anything already present under an
        * earlier batch is silently skipped.
        */
-      const inserted = await tx
-        .insert(measurements)
-        .values(
-          input.readings.map((r) => ({
-            siteId: input.siteId,
-            batchId: claimed.id,
-            readingId: r.readingId ?? null,
-            deviceId: r.deviceId,
-            readingTs: new Date(r.readingTs),
-            ch4Kg: r.ch4Kg,
-            source: r.source,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({
-          deviceId: measurements.deviceId,
-          readingTs: measurements.readingTs,
-          readingId: measurements.readingId,
-        });
+      const inserted = toInsert.length
+        ? await tx
+            .insert(measurements)
+            .values(
+              toInsert.map((r) => ({
+                siteId: input.siteId,
+                batchId: claimed.id,
+                readingId: r.readingId ?? null,
+                deviceId: r.deviceId,
+                readingTs: new Date(r.readingTs),
+                ch4Kg: r.ch4Kg,
+                source: r.source,
+              })),
+            )
+            .onConflictDoNothing()
+            .returning({
+              deviceId: measurements.deviceId,
+              readingTs: measurements.readingTs,
+              readingId: measurements.readingId,
+            })
+        : [];
 
       const readingsAccepted = inserted.length;
 
@@ -173,11 +201,15 @@ export class IngestMeasurementsHandler
        * a silently dropped reading understates a regulatory total, and unlike a
        * double-count nothing downstream will ever contradict it.
        */
-      const conflicts = await this.findValueConflicts(
+      const valueConflicts = await this.findValueConflicts(
         tx,
-        input,
+        { ...input, readings: toInsert },
         new Set(inserted.map((r) => identityOf(r))),
       );
+
+      // Merged for the response — the caller resolves both the same way — but
+      // kept apart above so each is counted and logged under its own reason.
+      const conflicts = [...reIdentified, ...valueConflicts];
 
       /**
        * Step 4 — the delta, computed by Postgres from the rows that landed.
@@ -276,7 +308,10 @@ export class IngestMeasurementsHandler
           site.emissionLimitKg,
         ) <= 0;
 
-      if (wasWithinLimit && complianceStatus === ComplianceStatus.LIMIT_EXCEEDED) {
+      if (
+        wasWithinLimit &&
+        complianceStatus === ComplianceStatus.LIMIT_EXCEEDED
+      ) {
         await tx.insert(outbox).values({
           aggregateType: 'site',
           aggregateId: input.siteId,
@@ -330,13 +365,29 @@ export class IngestMeasurementsHandler
         );
       }
 
-      if (conflicts.length > 0) {
-        this.metrics.recordDuplicate('value_conflict', conflicts.length);
+      if (reIdentified.length > 0) {
+        this.metrics.recordDuplicate('re_identified', reIdentified.length);
         this.logger.warn(
-          `batch ${claimed.id}: ${conflicts.length} reading(s) collided with a stored ` +
+          `batch ${claimed.id}: ${reIdentified.length} reading(s) arrived with a readingId ` +
+            `matching a stored reading that has none, and were NOT stored. ` +
+            `If this is the same reading re-identified, it is already counted; ` +
+            `if it is a new one, re-send it at a distinct timestamp. ` +
+            reIdentified
+              .map(
+                (c) =>
+                  `${c.deviceId}@${c.readingTs} submitted=${c.submittedCh4Kg} stored=${c.storedCh4Kg}`,
+              )
+              .join('; '),
+        );
+      }
+
+      if (valueConflicts.length > 0) {
+        this.metrics.recordDuplicate('value_conflict', valueConflicts.length);
+        this.logger.warn(
+          `batch ${claimed.id}: ${valueConflicts.length} reading(s) collided with a stored ` +
             `reading carrying a different mass and were NOT stored. ` +
             `The producer should send readingId. ` +
-            conflicts
+            valueConflicts
               .map(
                 (c) =>
                   `${c.deviceId}@${c.readingTs} submitted=${c.submittedCh4Kg} stored=${c.storedCh4Kg}`,
@@ -346,6 +397,59 @@ export class IngestMeasurementsHandler
       }
 
       return result;
+    });
+  }
+
+  /**
+   * Readings that carry a `readingId` and match a stored reading, on
+   * (site, device, instant), which has none.
+   *
+   * The one case the partial indexes cannot adjudicate: each row satisfies a
+   * different index, so both may exist and the same physical measurement would
+   * be counted twice.
+   */
+  private async findReIdentifiedReadings(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    input: IngestMeasurementsCommand['input'],
+  ): Promise<IngestResult['conflicts']> {
+    const identified = input.readings.filter((r) => r.readingId);
+    if (identified.length === 0) return [];
+
+    const stored = await tx
+      .select({
+        deviceId: measurements.deviceId,
+        readingTs: measurements.readingTs,
+        ch4Kg: measurements.ch4Kg,
+      })
+      .from(measurements)
+      .where(
+        and(
+          eq(measurements.siteId, input.siteId),
+          isNull(measurements.readingId),
+          or(
+            ...identified.map((r) =>
+              and(
+                eq(measurements.deviceId, r.deviceId),
+                eq(measurements.readingTs, new Date(r.readingTs)),
+              ),
+            ),
+          ),
+        ),
+      );
+
+    return stored.map((s) => {
+      const submitted = identified.find(
+        (r) =>
+          r.deviceId === s.deviceId &&
+          new Date(r.readingTs).getTime() === s.readingTs.getTime(),
+      );
+
+      return {
+        deviceId: s.deviceId,
+        readingTs: s.readingTs.toISOString(),
+        submittedCh4Kg: submitted?.ch4Kg ?? '0',
+        storedCh4Kg: s.ch4Kg,
+      };
     });
   }
 
@@ -406,7 +510,9 @@ export class IngestMeasurementsHandler
         ),
       );
 
-    const storedByIdentity = new Map(stored.map((s) => [identityOf(s), s.ch4Kg]));
+    const storedByIdentity = new Map(
+      stored.map((s) => [identityOf(s), s.ch4Kg]),
+    );
 
     const conflicts: IngestResult['conflicts'] = [];
 
