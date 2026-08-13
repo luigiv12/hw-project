@@ -1,5 +1,9 @@
 import { HttpException } from '@nestjs/common';
-import { ERROR_STATUS, type ApiError, type ErrorCode } from '@emissions/contracts';
+import {
+  ERROR_STATUS,
+  type ApiError,
+  type ErrorCode,
+} from '@emissions/contracts';
 
 /**
  * The only exception type the domain throws.

@@ -20,8 +20,16 @@ describe('concurrency', () => {
     const key = randomUUID();
 
     const batch = [
-      reading({ deviceId: 'BURST-01', readingTs: '2026-08-09T10:00:00.000Z', ch4Kg: '100.0000' }),
-      reading({ deviceId: 'BURST-01', readingTs: '2026-08-09T11:00:00.000Z', ch4Kg: '100.0000' }),
+      reading({
+        deviceId: 'BURST-01',
+        readingTs: '2026-08-09T10:00:00.000Z',
+        ch4Kg: '100.0000',
+      }),
+      reading({
+        deviceId: 'BURST-01',
+        readingTs: '2026-08-09T11:00:00.000Z',
+        ch4Kg: '100.0000',
+      }),
     ];
 
     // Fired together, not in sequence — the point is that they contend.
@@ -72,7 +80,9 @@ describe('concurrency', () => {
     );
 
     expect(responses.every((r) => r.status === 200)).toBe(true);
-    expect(responses.every((r) => result(r.body).readingsAccepted === 1)).toBe(true);
+    expect(responses.every((r) => result(r.body).readingsAccepted === 1)).toBe(
+      true,
+    );
 
     await h.expectReconciled(site.id, '100', 10);
   });
@@ -83,7 +93,11 @@ describe('concurrency', () => {
     // Identical readings, different keys: layer 1 cannot help, so this is
     // entirely layer 2's job, under contention.
     const batch = [
-      reading({ deviceId: 'OVERLAP-01', readingTs: '2026-08-09T08:00:00.000Z', ch4Kg: '25.0000' }),
+      reading({
+        deviceId: 'OVERLAP-01',
+        readingTs: '2026-08-09T08:00:00.000Z',
+        ch4Kg: '25.0000',
+      }),
     ];
 
     const [a, b] = await Promise.all([
@@ -137,7 +151,9 @@ describe('concurrency', () => {
       Array.from({ length: 50 }, () => h.ingest(site.id, batch, key)),
     );
 
-    expect(responses.filter((r) => !result(r.body).idempotentReplay)).toHaveLength(1);
+    expect(
+      responses.filter((r) => !result(r.body).idempotentReplay),
+    ).toHaveLength(1);
     await h.expectReconciled(site.id, '100', 1);
   });
 
@@ -151,7 +167,11 @@ describe('concurrency', () => {
      */
     const sharedKey = randomUUID();
     const shared = [
-      reading({ deviceId: 'MIX-SHARED', readingTs: '2026-08-09T07:00:00.000Z', ch4Kg: '5.0000' }),
+      reading({
+        deviceId: 'MIX-SHARED',
+        readingTs: '2026-08-09T07:00:00.000Z',
+        ch4Kg: '5.0000',
+      }),
     ];
 
     await Promise.all([

@@ -13,8 +13,7 @@ import { requestContext } from './request-context';
 export class RequestIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     const inbound = req.header('x-request-id');
-    const requestId =
-      inbound && inbound.length <= 200 ? inbound : randomUUID();
+    const requestId = inbound && inbound.length <= 200 ? inbound : randomUUID();
 
     res.setHeader('X-Request-Id', requestId);
 

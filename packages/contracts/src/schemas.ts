@@ -87,6 +87,18 @@ export const siteSchema = z.object({
   emissionLimitKg: z.string(),
   totalEmissionsToDateKg: z.string(),
   measurementCount: z.number().int().nonnegative(),
+
+  /**
+   * Served rather than derived by the client.
+   *
+   * The rule is an exact decimal comparison — strictly greater than the limit,
+   * with a site exactly at its limit still within it. A consumer re-deriving it
+   * from the two strings above would be doing that comparison in float64, which
+   * is the rounding this contract carries decimals as strings to avoid. One
+   * definition, evaluated where the exact arithmetic is.
+   */
+  complianceStatus: complianceStatusSchema,
+
   metadata: z.record(z.string(), z.unknown()),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -167,7 +179,10 @@ export const ingestSchema = z
     readings: z
       .array(readingSchema)
       .min(1)
-      .max(MAX_BATCH_SIZE, `a batch may carry at most ${MAX_BATCH_SIZE} readings`),
+      .max(
+        MAX_BATCH_SIZE,
+        `a batch may carry at most ${MAX_BATCH_SIZE} readings`,
+      ),
   })
   .superRefine((batch, ctx) => {
     /**

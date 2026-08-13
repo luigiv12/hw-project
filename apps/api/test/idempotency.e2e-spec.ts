@@ -29,8 +29,16 @@ describe('idempotency', () => {
       const site = await h.createSite();
       const key = randomUUID();
 
-      const a = reading({ deviceId: 'D1', readingTs: '2026-08-09T01:00:00.000Z', ch4Kg: '1.0000' });
-      const b = reading({ deviceId: 'D2', readingTs: '2026-08-09T02:00:00.000Z', ch4Kg: '2.0000' });
+      const a = reading({
+        deviceId: 'D1',
+        readingTs: '2026-08-09T01:00:00.000Z',
+        ch4Kg: '1.0000',
+      });
+      const b = reading({
+        deviceId: 'D2',
+        readingTs: '2026-08-09T02:00:00.000Z',
+        ch4Kg: '2.0000',
+      });
 
       await h.ingest(site.id, [a, b], key);
 
@@ -133,12 +141,24 @@ describe('idempotency', () => {
       const site = await h.createSite();
 
       await h.ingest(site.id, [
-        reading({ deviceId: 'PART', readingTs: '2026-08-09T03:00:00.000Z', ch4Kg: '1.0000' }),
+        reading({
+          deviceId: 'PART',
+          readingTs: '2026-08-09T03:00:00.000Z',
+          ch4Kg: '1.0000',
+        }),
       ]);
 
       const second = await h.ingest(site.id, [
-        reading({ deviceId: 'PART', readingTs: '2026-08-09T03:00:00.000Z', ch4Kg: '1.0000' }),
-        reading({ deviceId: 'PART', readingTs: '2026-08-09T04:00:00.000Z', ch4Kg: '2.0000' }),
+        reading({
+          deviceId: 'PART',
+          readingTs: '2026-08-09T03:00:00.000Z',
+          ch4Kg: '1.0000',
+        }),
+        reading({
+          deviceId: 'PART',
+          readingTs: '2026-08-09T04:00:00.000Z',
+          ch4Kg: '2.0000',
+        }),
       ]);
 
       // The summary must move by what was accepted, not by what was submitted.
@@ -153,7 +173,9 @@ describe('idempotency', () => {
       const site = await h.createSite();
       const at = '2026-08-09T05:00:00.000Z';
 
-      await h.ingest(site.id, [reading({ deviceId: 'CONF', readingTs: at, ch4Kg: '10.0000' })]);
+      await h.ingest(site.id, [
+        reading({ deviceId: 'CONF', readingTs: at, ch4Kg: '10.0000' }),
+      ]);
 
       /**
        * A true retry resends identical values, so a differing mass is not a
@@ -181,7 +203,11 @@ describe('idempotency', () => {
     it('rejects a key reused for readings that differ only by readingId', async () => {
       const site = await h.createSite();
       const key = randomUUID();
-      const base = { deviceId: 'HASH', readingTs: '2026-08-09T01:00:00.000Z', ch4Kg: '10.0000' };
+      const base = {
+        deviceId: 'HASH',
+        readingTs: '2026-08-09T01:00:00.000Z',
+        ch4Kg: '10.0000',
+      };
 
       await h.ingest(site.id, [reading({ ...base, readingId: 'A' })], key);
 
@@ -215,7 +241,9 @@ describe('idempotency', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
-      expect(res.body.error.details[0].message).toMatch(/duplicate reading identity/i);
+      expect(res.body.error.details[0].message).toMatch(
+        /duplicate reading identity/i,
+      );
       await h.expectReconciled(site.id, '0', 0);
     });
 
@@ -224,8 +252,18 @@ describe('idempotency', () => {
       const at = '2026-08-09T03:00:00.000Z';
 
       const res = await h.ingest(site.id, [
-        reading({ readingId: 'x1', deviceId: 'OK', readingTs: at, ch4Kg: '10.0000' }),
-        reading({ readingId: 'x2', deviceId: 'OK', readingTs: at, ch4Kg: '20.0000' }),
+        reading({
+          readingId: 'x1',
+          deviceId: 'OK',
+          readingTs: at,
+          ch4Kg: '10.0000',
+        }),
+        reading({
+          readingId: 'x2',
+          deviceId: 'OK',
+          readingTs: at,
+          ch4Kg: '20.0000',
+        }),
       ]);
 
       expect(res.status).toBe(200);
@@ -249,7 +287,12 @@ describe('idempotency', () => {
       const before = await h.duplicateCount('re_identified');
 
       const replay = await h.ingest(site.id, [
-        reading({ readingId: 'up-1', deviceId: 'UPGRADE', readingTs: at, ch4Kg: '50.0000' }),
+        reading({
+          readingId: 'up-1',
+          deviceId: 'UPGRADE',
+          readingTs: at,
+          ch4Kg: '50.0000',
+        }),
       ]);
 
       expect(result(replay.body).readingsAccepted).toBe(0);
@@ -270,7 +313,10 @@ describe('idempotency', () => {
   describe('input is bounded before it reaches the database', () => {
     it.each([
       ['zero limit', { name: 'z', emissionLimitKg: '0' }],
-      ['limit beyond the column', { name: 'z', emissionLimitKg: '999999999999' }],
+      [
+        'limit beyond the column',
+        { name: 'z', emissionLimitKg: '999999999999' },
+      ],
     ])('rejects %s with 400, not 500', async (_label, body) => {
       const res = await h.http.post('/v2/sites').send(body);
       expect(res.status).toBe(400);
@@ -279,7 +325,9 @@ describe('idempotency', () => {
 
     it('rejects a mass beyond the column with 400, not 500', async () => {
       const site = await h.createSite();
-      const res = await h.ingest(site.id, [reading({ ch4Kg: '99999999999.0' })]);
+      const res = await h.ingest(site.id, [
+        reading({ ch4Kg: '99999999999.0' }),
+      ]);
 
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
@@ -292,8 +340,18 @@ describe('idempotency', () => {
       const at = '2026-08-09T06:00:00.000Z';
 
       const res = await h.ingest(site.id, [
-        reading({ readingId: 'r-1', deviceId: 'SAME-TS', readingTs: at, ch4Kg: '10.0000' }),
-        reading({ readingId: 'r-2', deviceId: 'SAME-TS', readingTs: at, ch4Kg: '47.5000' }),
+        reading({
+          readingId: 'r-1',
+          deviceId: 'SAME-TS',
+          readingTs: at,
+          ch4Kg: '10.0000',
+        }),
+        reading({
+          readingId: 'r-2',
+          deviceId: 'SAME-TS',
+          readingTs: at,
+          ch4Kg: '47.5000',
+        }),
       ]);
 
       // Without readingId these collapse onto one identity and the second is

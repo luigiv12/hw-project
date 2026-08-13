@@ -64,8 +64,11 @@ services:
     container_name: emissions_migrate
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-emissions}:${POSTGRES_PASSWORD:-emissions}@postgres:5432/${POSTGRES_DB:-emissions}
+    # `--if-empty`: migrations are idempotent, but seeding is not. Without it a
+    # plain `docker compose up` on an existing stack truncates whatever has been
+    # ingested since the last start.
     command: >
-      sh -c "node apps/api/dist/db/migrate.js && node apps/api/dist/db/seed.js"
+      sh -c "node apps/api/dist/db/migrate.js && node apps/api/dist/db/seed.js --if-empty"
     depends_on:
       postgres:
         condition: service_healthy

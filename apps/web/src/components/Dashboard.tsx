@@ -32,7 +32,9 @@ export function Dashboard({
       // figures with a visible warning are more useful to an operator than an
       // empty screen.
       setError(
-        err instanceof Error ? err.message : 'Could not reach the emissions API',
+        err instanceof Error
+          ? err.message
+          : 'Could not reach the emissions API',
       );
     }
   }, []);

@@ -96,7 +96,10 @@ async function main(): Promise<void> {
      * against the rows it claims to summarise, or it is only trustworthy by
      * assertion.
      */
-    const { rows: spans } = await pool.query<{ name: string; problem: string }>(`
+    const { rows: spans } = await pool.query<{
+      name: string;
+      problem: string;
+    }>(`
       SELECT s.name,
              CASE
                WHEN m.first_at IS NULL AND (s.first_reading_at IS NOT NULL OR s.last_reading_at IS NOT NULL)

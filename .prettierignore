@@ -1,0 +1,15 @@
+# Build output and dependencies
+node_modules/
+dist/
+.next/
+coverage/
+
+# Generated — regenerated on install or build, so formatting them creates churn
+pnpm-lock.yaml
+apps/web/next-env.d.ts
+apps/api/drizzle/meta/
+
+# Supplied with the exercise. Left byte-for-byte as given so a reviewer diffing
+# against the original sees only the services that were added, not a reformat.
+docker-compose.yml
+.env.example

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { IngestResult, Site } from '@emissions/contracts';
+import {
+  ComplianceStatus,
+  type IngestResult,
+  type Site,
+} from '@emissions/contracts';
 import { IngestForm } from './IngestForm';
 import { NetworkError, ingest } from '@/lib/api';
 
@@ -18,6 +22,7 @@ const site: Site = {
   emissionLimitKg: '1000.000',
   totalEmissionsToDateKg: '10.0000',
   measurementCount: 1,
+  complianceStatus: ComplianceStatus.WITHIN_LIMIT,
   metadata: {},
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
@@ -46,7 +51,8 @@ function renderForm() {
 }
 
 const submit = () => screen.getByRole('button', { name: /submit batch/i });
-const retry = () => screen.getByRole('button', { name: /retry with the same key/i });
+const retry = () =>
+  screen.getByRole('button', { name: /retry with the same key/i });
 
 describe('IngestForm', () => {
   beforeEach(() => {
@@ -114,7 +120,9 @@ describe('IngestForm', () => {
 
     await userEvent.click(submit());
 
-    expect(await screen.findByText(/recognised as a duplicate/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/recognised as a duplicate/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/unchanged/i)).toBeInTheDocument();
   });
 
@@ -149,7 +157,9 @@ describe('IngestForm', () => {
     await userEvent.click(submit());
 
     expect(await screen.findByText(/were NOT stored/i)).toBeInTheDocument();
-    expect(screen.getByText(/submitted 47.5000 kg, stored 10.0000 kg/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/submitted 47.5000 kg, stored 10.0000 kg/i),
+    ).toBeInTheDocument();
   });
 
   it('omits readingId from the payload when the field is blank', async () => {
@@ -166,10 +176,7 @@ describe('IngestForm', () => {
   it('sends readingId when one is supplied', async () => {
     ingestMock.mockResolvedValue({ result: okResult(), replayed: false });
 
-    await userEvent.type(
-      screen.getByLabelText(/reading id/i),
-      'sample-0001',
-    );
+    await userEvent.type(screen.getByLabelText(/reading id/i), 'sample-0001');
     await userEvent.click(submit());
 
     await waitFor(() => expect(ingestMock).toHaveBeenCalledTimes(1));

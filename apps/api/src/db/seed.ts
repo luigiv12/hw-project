@@ -11,8 +11,12 @@ import { ingestionBatches, measurements, sites } from './schema';
  * visible on the dashboard and in GET /metrics without a reviewer having to
  * ingest anything first.
  *
- * Destructive: truncates and rebuilds. Intended for local development and the
- * one-time seeding of the demo deployment, not for a live dataset.
+ * Destructive by default: truncates and rebuilds. Intended for local development
+ * and the one-time seeding of the demo deployment, not for a live dataset.
+ *
+ * Pass `--if-empty` to make it a no-op when any site already exists. That is how
+ * compose invokes it, so bringing the stack up a second time does not discard
+ * data someone ingested against the first.
  */
 
 type SeedSite = {
@@ -38,7 +42,11 @@ const SEED_SITES: SeedSite[] = [
     id: '0a5b1c2d-0000-4000-8000-000000000001',
     name: 'Fox Creek Well Pad 12',
     emissionLimitKg: '5000.000',
-    metadata: { operator: 'Northridge Energy', basin: 'Duvernay', province: 'AB' },
+    metadata: {
+      operator: 'Northridge Energy',
+      basin: 'Duvernay',
+      province: 'AB',
+    },
     // ~85% of limit — close enough to matter, so the utilisation bar earns its place.
     perReadingKg: 15.18,
     devices: ['FC12-METH-01', 'FC12-METH-02'],
@@ -48,7 +56,11 @@ const SEED_SITES: SeedSite[] = [
     id: '0a5b1c2d-0000-4000-8000-000000000002',
     name: 'Peace River Compressor Station',
     emissionLimitKg: '12000.000',
-    metadata: { operator: 'Northridge Energy', basin: 'Montney', province: 'AB' },
+    metadata: {
+      operator: 'Northridge Energy',
+      basin: 'Montney',
+      province: 'AB',
+    },
     // ~45% of limit.
     perReadingKg: 12.86,
     devices: ['PRC-METH-01', 'PRC-METH-02', 'PRC-SAT-01'],
@@ -91,10 +103,39 @@ async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is required to seed');
 
+  /**
+   * `--if-empty` makes seeding a first-boot step rather than a startup step.
+   *
+   * Compose runs this on every `docker compose up`, including a plain restart of
+   * an already-populated stack. Unconditional truncation there would delete
+   * whatever a reviewer had ingested — the demo would reset itself underneath
+   * someone part-way through exercising it, which looks like the ingest endpoint
+   * losing data.
+   *
+   * A bare `pnpm db:seed` stays destructive: typing it is an explicit request to
+   * rebuild the demo dataset, and a reset command that silently declines to
+   * reset is its own trap.
+   */
+  const onlyIfEmpty = process.argv.includes('--if-empty');
+
   const pool = new Pool({ connectionString, max: 1 });
   const db = drizzle(pool, { schema: { sites, measurements } });
 
   try {
+    if (onlyIfEmpty) {
+      const [existing] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(sites);
+
+      if ((existing?.n ?? 0) > 0) {
+        console.log(
+          `[seed] ${existing.n} site(s) already present — leaving the data alone. ` +
+            'Run `pnpm db:seed` to rebuild the demo dataset.',
+        );
+        return;
+      }
+    }
+
     await db.transaction(async (tx) => {
       // measurements and ingestion_batches cascade from sites
       await tx.execute(

@@ -27,8 +27,7 @@ export function encodeCursor(name: string, id: string): string {
   return Buffer.from(JSON.stringify([name, id]), 'utf8').toString('base64url');
 }
 
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Returns null for anything that is not a cursor this service issued.
@@ -38,7 +37,9 @@ const UUID =
  * decodes cleanly but is not a UUID would otherwise fail inside Postgres and
  * surface as a server error rather than as the bad input it is.
  */
-export function decodeCursor(cursor: string): { name: string; id: string } | null {
+export function decodeCursor(
+  cursor: string,
+): { name: string; id: string } | null {
   try {
     const parsed: unknown = JSON.parse(
       Buffer.from(cursor, 'base64url').toString('utf8'),

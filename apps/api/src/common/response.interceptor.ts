@@ -20,9 +20,10 @@ import { Paginated } from './paginated';
  * convention.
  */
 @Injectable()
-export class ResponseInterceptor<T>
-  implements NestInterceptor<T, SuccessEnvelope<unknown>>
-{
+export class ResponseInterceptor<T> implements NestInterceptor<
+  T,
+  SuccessEnvelope<unknown>
+> {
   intercept(
     _ctx: ExecutionContext,
     next: CallHandler<T>,

@@ -71,7 +71,12 @@ export default tseslint.config(
 
   // Tests assert on loosely typed response bodies and mock freely.
   {
-    files: ['**/*.test.{ts,tsx}', '**/*.spec.ts', '**/*.e2e-spec.ts', '**/test/**'],
+    files: [
+      '**/*.test.{ts,tsx}',
+      '**/*.spec.ts',
+      '**/*.e2e-spec.ts',
+      '**/test/**',
+    ],
     rules: {
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',

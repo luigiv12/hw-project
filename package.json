@@ -20,7 +20,9 @@
     "infra:down": "docker compose down",
     "infra:reset": "docker compose down -v && docker compose up -d postgres redis",
     "lint:fix": "eslint . --fix",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
