@@ -1,5 +1,14 @@
-import { Controller, Get, Header, Res, Version, VERSION_NEUTRAL } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Res,
+  UseGuards,
+  Version,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
 import type { Response } from 'express';
+import { MetricsGuard } from './metrics.guard';
 import { MetricsService } from './metrics.service';
 
 /**
@@ -10,6 +19,7 @@ import { MetricsService } from './metrics.service';
  * text exposition format rather than JSON.
  */
 @Controller('metrics')
+@UseGuards(MetricsGuard)
 export class MetricsController {
   constructor(private readonly metrics: MetricsService) {}
 

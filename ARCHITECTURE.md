@@ -377,16 +377,47 @@ if and only if the data does. Calling an alerting service over HTTP from the
 handler would break that: the call could succeed and the transaction still roll
 back, alerting on an emission that was never recorded.
 
-The dispatcher claims work with `FOR UPDATE SKIP LOCKED`, so N API replicas
-divide the queue with no coordination and no double delivery. It
-**self-reschedules** rather than using `setInterval`: a fixed interval keeps
-firing whether or not the previous pass finished, stacking overlapping passes
-exactly when a slow downstream is already the problem.
+### Claiming
+
+A claim is an `UPDATE … SET claimed_at = now()` wrapped around a
+`SELECT … FOR UPDATE SKIP LOCKED`, in one statement.
+
+`SKIP LOCKED` alone is not enough, and it is worth being precise about why.
+It excludes dispatchers that are selecting *at the same instant*, but the lock
+lives only as long as the claiming transaction — and delivery is an HTTP call
+made after that transaction commits. The interval that actually needs protecting
+is the one the lock has already stopped covering. So the claim is written into
+the row: `claimed_at` outlives the transaction, and rows whose lease is still
+live are skipped by every other dispatcher.
+
+That makes the lease the unit of safety, with two consequences worth stating:
+
+- **`LEASE_MS` must exceed worst-case delivery time.** If it expires mid-flight,
+  a second dispatcher takes the row and delivers it again.
+- **A dispatcher that dies mid-delivery strands its rows only until the lease
+  lapses**, rather than permanently. That is the property the lease buys back for
+  the cost of the redelivery window above.
+
+Rows at `MAX_ATTEMPTS` are excluded from claims entirely. A permanently failing
+row would otherwise keep its place in `ORDER BY id LIMIT 50` on every pass, and
+enough of them fill the batch — at which point the queue behind them stops moving
+altogether. Excluding them is what keeps one poisoned event from being an outage.
+They are counted separately in `emissions_outbox_dead_lettered` rather than
+folded into the pending gauge, because "delivery has stalled" and "these have
+already been triaged" warrant different responses.
+
+The dispatcher **self-reschedules** rather than using `setInterval`: a fixed
+interval keeps firing whether or not the previous pass finished, stacking
+overlapping passes exactly when a slow downstream is already the problem.
+
+### Delivery semantics
 
 Delivery is **at-least-once**, so the consumer must be idempotent — `id` is
 provided as the de-duplication token, the same reasoning as `Idempotency-Key` one
-layer further out. Failures increment `attempts` and leave the row unpublished;
-the failure mode is delayed delivery, never lost delivery.
+layer further out. Failures increment `attempts` and leave the row unpublished
+with its stamp intact, so the lease doubles as retry backoff: a downstream blip
+shorter than the lease costs one attempt rather than burning all ten in ten
+seconds of polling. The failure mode is delayed delivery, never lost delivery.
 
 `site.limit_exceeded` fires only on the **transition** into breach, not on every
 subsequent batch. An alerting service should learn that a site crossed its limit
@@ -700,6 +731,22 @@ infrastructure the brief does not ask for and is not set up here.
 The metrics registry is in-process, so a scrape reflects one replica. The SSE
 upgrade described above would need Redis pub/sub for fan-out across replicas —
 Redis is already in the compose file and otherwise unused.
+
+Rate limiting is also per-process: the throttler counts in memory, so N replicas
+permit N times the configured ceiling. Correct enforcement across replicas needs
+a shared counter, which is the other thing Redis would earn its place doing. The
+limit here is a courtesy guard on a public write surface rather than a security
+control, so a factor-of-N ceiling is acceptable and named rather than fixed.
+
+### `/metrics` is open unless a token is set
+
+`METRICS_TOKEN` gates the endpoint; unset leaves it public. Unset is the right
+default for local development and for a demo whose README invites a reviewer to
+curl it, and the wrong one for an operational deployment — the exposition
+describes ingest volume, site count, and error rates, and the default process
+collectors add runtime and version detail. The production deployment logs a
+warning at boot when the variable is missing, so the state is visible rather than
+assumed.
 
 ---
 

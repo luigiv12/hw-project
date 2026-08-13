@@ -13,10 +13,23 @@ import { MetricsService } from '../observability/metrics.service';
 import { AlertingClient, type OutboxEvent } from './alerting.client';
 
 /** Rows claimed per pass. Bounded so one pass cannot hold locks unboundedly. */
-const BATCH_SIZE = 50;
+export const BATCH_SIZE = 50;
 
-/** Attempts before a row is left for manual attention rather than retried forever. */
-const MAX_ATTEMPTS = 10;
+/** Attempts before a row is set aside for manual attention rather than retried forever. */
+export const MAX_ATTEMPTS = 10;
+
+/**
+ * How long a claim holds a row before another dispatcher may take it.
+ *
+ * Two jobs. It bounds how long a row is stranded when a dispatcher dies
+ * mid-delivery, and — because a failed delivery leaves the stamp in place — it
+ * is also the retry backoff. At 30s a downstream blip shorter than the lease
+ * costs one attempt rather than exhausting all ten in ten seconds of polling.
+ *
+ * Must exceed the worst-case delivery time. A lease that expires while delivery
+ * is still in flight lets a second dispatcher take the row and deliver it again.
+ */
+const LEASE_MS = 30_000;
 
 /**
  * Transactional outbox dispatcher (bonus #4).
@@ -89,9 +102,10 @@ export class OutboxDispatcher
         const message = err instanceof Error ? err.message : String(err);
 
         /**
-         * The row stays unpublished, so the next pass retries it. Attempts are
-         * recorded so a permanently failing event is visible rather than
-         * silently spinning.
+         * The row stays unpublished and keeps its claim stamp, so it becomes
+         * eligible again once the lease lapses — which makes the lease the retry
+         * backoff. Attempts are recorded so a permanently failing event is set
+         * aside at MAX_ATTEMPTS rather than retried forever.
          */
         const [row] = await this.db
           .update(outbox)
@@ -106,7 +120,9 @@ export class OutboxDispatcher
 
         if (row && row.attempts >= MAX_ATTEMPTS) {
           this.logger.error(
-            `outbox#${event.id} (${event.eventType}) has failed ${row.attempts} times and needs attention: ${message}`,
+            `outbox#${event.id} (${event.eventType}) has failed ${row.attempts} times and will no longer be retried automatically; ` +
+              `it is excluded from future claims so the queue behind it keeps moving. ` +
+              `Re-queue it by resetting attempts to 0 once the cause is fixed. Last error: ${message}`,
           );
         } else {
           this.logger.warn(
@@ -121,42 +137,77 @@ export class OutboxDispatcher
   }
 
   /**
-   * Claims a batch of undelivered events.
+   * Claims a batch of undelivered events by stamping them, in one statement.
    *
-   * FOR UPDATE SKIP LOCKED is what makes this safe to run on every API instance
-   * at once: each transaction locks the rows it takes and skips rows another
-   * instance already holds, so N dispatchers share the work instead of
-   * colliding on it or delivering the same event N times.
+   * `FOR UPDATE SKIP LOCKED` selects the rows and excludes any another
+   * dispatcher is taking at this instant. That lock lasts only as long as this
+   * statement's transaction, and delivery happens over the network afterwards —
+   * so the lock alone cannot keep a second dispatcher away for the part that
+   * matters. The `UPDATE ... SET claimed_at` wrapped around it is what does:
+   * the claim survives the transaction as data, and the predicate below skips
+   * rows whose lease is still live.
+   *
+   * Excluded from selection:
+   *
+   *   published_at IS NULL   not already delivered
+   *   attempts < MAX         not dead-lettered — a permanently failing row must
+   *                          not keep occupying a slot in every pass, or the
+   *                          queue behind it stops moving
+   *   lease lapsed           not currently held by a live dispatcher
    *
    * Ordered by id so events for a given aggregate are delivered in the order
    * they were produced.
    */
   private async claim(): Promise<OutboxEvent[]> {
-    return this.db.transaction(async (tx) => {
-      const rows = await tx
-        .select()
-        .from(outbox)
-        .where(isNull(outbox.publishedAt))
-        .orderBy(outbox.id)
-        .limit(BATCH_SIZE)
-        .for('update', { skipLocked: true });
+    const leaseCutoff = new Date(Date.now() - LEASE_MS);
 
-      return rows.map((r) => ({
-        id: r.id,
-        eventType: r.eventType,
-        aggregateType: r.aggregateType,
-        aggregateId: r.aggregateId,
-        payload: r.payload,
-      }));
-    });
+    const { rows } = await this.db.execute<{
+      id: string | number;
+      event_type: string;
+      aggregate_type: string;
+      aggregate_id: string;
+      payload: Record<string, unknown>;
+    }>(sql`
+      update ${outbox} set claimed_at = now()
+      where id in (
+        select id from ${outbox}
+        where published_at is null
+          and attempts < ${MAX_ATTEMPTS}
+          and (claimed_at is null or claimed_at < ${leaseCutoff})
+        order by id
+        limit ${BATCH_SIZE}
+        for update skip locked
+      )
+      returning id, event_type, aggregate_type, aggregate_id, payload
+    `);
+
+    return rows.map((r) => ({
+      id: Number(r.id),
+      eventType: r.event_type,
+      aggregateType: r.aggregate_type,
+      aggregateId: r.aggregate_id,
+      payload: r.payload,
+    }));
   }
 
+  /**
+   * Pending and dead-lettered are counted separately.
+   *
+   * Dead-lettered rows are unpublished and never drain, so folding them into
+   * one gauge would show a backlog that no amount of healthy throughput clears —
+   * the alert that matters ("events are not moving") would be indistinguishable
+   * from history that has already been triaged.
+   */
   private async refreshPendingGauge(): Promise<void> {
     const [row] = await this.db
-      .select({ n: sql<number>`count(*)::int` })
+      .select({
+        pending: sql<number>`count(*) filter (where ${outbox.attempts} < ${MAX_ATTEMPTS})::int`,
+        deadLettered: sql<number>`count(*) filter (where ${outbox.attempts} >= ${MAX_ATTEMPTS})::int`,
+      })
       .from(outbox)
       .where(isNull(outbox.publishedAt));
 
-    this.metrics.setOutboxPending(row?.n ?? 0);
+    this.metrics.setOutboxPending(row?.pending ?? 0);
+    this.metrics.setOutboxDeadLettered(row?.deadLettered ?? 0);
   }
 }

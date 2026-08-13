@@ -37,6 +37,32 @@ export const envSchema = z.object({
   RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
 
+  /**
+   * Number of reverse proxies in front of this process.
+   *
+   * Rate limiting buckets by client IP, and behind a proxy every request
+   * arrives from the proxy's address — so without this the whole internet
+   * shares one bucket and the limit is effectively global.
+   *
+   * Defaults to 0 rather than 1 because the failure modes are asymmetric.
+   * Trusting a hop that does not exist lets any caller set `X-Forwarded-For`
+   * and be metered as whatever address they like, which is worse than the
+   * over-strict bucketing of not trusting one that does. Set it to the actual
+   * hop count: 1 behind Railway, Fly, or a single nginx.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().nonnegative().default(0),
+
+  /**
+   * Bearer token required to scrape `/metrics`. Unset leaves the endpoint open.
+   *
+   * Open is the right default for local development and for a demo deployment
+   * whose README invites a reviewer to curl it. It is the wrong default for an
+   * operational deployment, where the exposition reveals ingest volumes, site
+   * counts, error rates, and — through the default process collectors — runtime
+   * and version detail worth not publishing.
+   */
+  METRICS_TOKEN: z.string().min(1).optional(),
+
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),

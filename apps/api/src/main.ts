@@ -13,7 +13,23 @@ async function bootstrap(): Promise<void> {
     NODE_ENV: config.getOrThrow<Env['NODE_ENV']>('NODE_ENV'),
     PORT: config.getOrThrow<number>('PORT'),
     CORS_ORIGINS: config.getOrThrow<string>('CORS_ORIGINS'),
+    TRUST_PROXY_HOPS: config.getOrThrow<number>('TRUST_PROXY_HOPS'),
   } as Env;
+
+  /**
+   * Tell Express how many proxy hops to believe.
+   *
+   * Rate limiting buckets by client IP. Behind a proxy every request carries the
+   * proxy's address unless `X-Forwarded-For` is trusted, which collapses all
+   * callers into a single bucket — the limiter still fires, but as a global cap
+   * rather than a per-client one, so one noisy caller throttles everybody.
+   *
+   * Trusting a fixed hop count rather than `true`: `true` believes the entire
+   * forwarded chain, including whatever a caller prepends to it.
+   */
+  if (env.TRUST_PROXY_HOPS > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', env.TRUST_PROXY_HOPS);
+  }
 
   /**
    * URI versioning.
