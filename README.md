@@ -172,6 +172,82 @@ DATABASE_URL="postgresql://…" pnpm db:verify
 
 ---
 
+## Looking at the data
+
+The stack is already running Postgres, so the shortest path needs nothing else
+installed:
+
+```bash
+docker compose exec postgres psql -U emissions -d emissions
+```
+
+`\dt` lists the tables, `\d measurements` describes one. Or run a single query
+without the shell:
+
+```bash
+docker compose exec postgres psql -U emissions -d emissions \
+  -c "select name, total_emissions_to_date_kg, emission_limit_kg from sites order by name;"
+```
+
+Two queries are worth running, because they make design decisions visible that
+the API deliberately hides:
+
+**Partitioning is real, not described** (bonus #3). Every reading lives in the
+partition for its month:
+
+```sql
+select tableoid::regclass as partition, count(*)
+from measurements group by 1 order by 1;
+```
+
+```
+ measurements_2026_06 | 480
+ measurements_2026_07 | 480
+ measurements_2026_08 | 216     ← current month, still filling
+```
+
+The seed writes three months ending today, so the partition names you see are
+the three months preceding your own seed, not the ones above.
+
+`measurements` itself is a _partitioned table_ — a definition and routing layer
+with no storage of its own. Querying it reads through to the partitions, so
+`count(*)` returns every row, while `ONLY` asks what the parent stores directly:
+
+```sql
+select (select count(*) from measurements)      as via_parent,
+       (select count(*) from only measurements) as stored_in_parent,
+       pg_relation_size('measurements')         as parent_bytes;
+```
+
+`via_parent` is however many readings you have; the other two are always **0**.
+An insert is routed to a partition, and there is no way to make a row stay in the
+parent.
+
+**Idempotency keeps receipts.** Every batch is recorded with the hash of its
+request and the exact response replayed to any retry. `readings_submitted`
+against `readings_accepted` is the reading-level de-duplication in one column
+pair — the site total moves by the accepted figure, never the submitted one:
+
+```sql
+select idempotency_key, status, readings_submitted, readings_accepted, accepted_ch4_kg
+from ingestion_batches order by created_at desc limit 5;
+```
+
+### Other ways in
+
+|                                          |                                                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm --filter @emissions/api db:studio` | Drizzle Studio — browsable and already connected, but costs a `pnpm install` the containerised app otherwise does not need. Serves on :4983 and the UI opens at **https://local.drizzle.studio**; :4983 on its own returns 404 |
+| pgAdmin                                  | `docker compose --profile tools up -d` → :5050, login `admin@local.dev` / `admin`                                                                                                                                              |
+
+pgAdmin starts with no server registered, so add one: host **`postgres`** — not
+`localhost`, which from inside that container is pgAdmin itself — port `5432`,
+and `emissions` for database, username and password. Set **maintenance database**
+to `emissions` as well, or the tree opens on the empty `postgres` database and
+looks like nothing was ever created.
+
+---
+
 ## The endpoints
 
 ```
@@ -249,18 +325,18 @@ cd apps/api && pnpm dev                 # :3000, watch mode
 cd apps/web && pnpm dev                 # :3001
 ```
 
-| Script                                   |                                          |
-| ---------------------------------------- | ---------------------------------------- |
-| `pnpm verify`                            | format, lint, typecheck and test         |
-| `pnpm test`                              | full suite — API and dashboard           |
-| `pnpm lint` / `lint:fix`                 | eslint across the workspace              |
-| `pnpm format` / `format:check`           | prettier                                 |
-| `pnpm db:migrate`                        | apply migrations                         |
-| `pnpm db:seed`                           | rebuild demo data — **destructive**      |
-| `pnpm db:verify`                         | reconcile summaries against measurements |
-| `pnpm --filter @emissions/api db:studio` | browse the database at :4983             |
-| `pnpm infra:up` / `infra:down`           | Postgres + Redis only                    |
-| `pnpm infra:reset`                       | destroy volumes and restart              |
+| Script                                   |                                                          |
+| ---------------------------------------- | -------------------------------------------------------- |
+| `pnpm verify`                            | format, lint, typecheck and test                         |
+| `pnpm test`                              | full suite — API and dashboard                           |
+| `pnpm lint` / `lint:fix`                 | eslint across the workspace                              |
+| `pnpm format` / `format:check`           | prettier                                                 |
+| `pnpm db:migrate`                        | apply migrations                                         |
+| `pnpm db:seed`                           | rebuild demo data — **destructive**                      |
+| `pnpm db:verify`                         | reconcile summaries against measurements                 |
+| `pnpm --filter @emissions/api db:studio` | browse the database — UI at https://local.drizzle.studio |
+| `pnpm infra:up` / `infra:down`           | Postgres + Redis only                                    |
+| `pnpm infra:reset`                       | destroy volumes and restart                              |
 
 Any `db:*` script accepts an inline connection string, which is how to point one
 at a deployed database:
