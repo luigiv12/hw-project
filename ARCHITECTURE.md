@@ -769,10 +769,10 @@ assumed.
 
 ## 11. Verifying the claims
 
-Nothing above is asserted without a test behind it. `pnpm test` runs 74 tests
-against real Postgres — no mocks, because everything under test (`ON CONFLICT`
-semantics, `SELECT FOR UPDATE`, exact `numeric` arithmetic, partition routing) is
-database behaviour.
+Nothing above is asserted without a test behind it. `pnpm test` runs 127 tests,
+111 of them against real Postgres — no mocks, because everything under test
+(`ON CONFLICT` semantics, `SELECT FOR UPDATE`, exact `numeric` arithmetic,
+partition routing) is database behaviour.
 
 The two that matter:
 
