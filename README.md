@@ -3,11 +3,29 @@
 Methane ingestion, de-duplication, and compliance monitoring — built for the
 Highwood engineering challenge.
 
-**The thing to look at is the retry behaviour.** A field device that times out and
-retries must never double-count an emission. [Prove it in 30 seconds](#prove-it)
-below, or open the dashboard, tick _"Simulate a dropped response"_, submit, and
-press **Retry** — the batch is recognised as a duplicate and the site total does
-not move.
+### Live
+
+|               |                                                  |
+| ------------- | ------------------------------------------------ |
+| **Dashboard** | **https://hw-project-web.vercel.app**            |
+| **API**       | **https://hw-project-production.up.railway.app** |
+
+No login. Four sites are already seeded, one of them over its limit, so
+`Limit Exceeded` is visible on arrival.
+
+**The thing to look at is the retry behaviour.** A field device that times out
+and retries must never double-count an emission.
+
+On the dashboard: tick _"Simulate a dropped response"_, press **Submit**, then
+press **Retry**. The first attempt reaches the server and commits — only the
+reply is thrown away, which is exactly what a device experiences on a timeout.
+The retry reuses the same idempotency key, the server recognises it, replays its
+original response, and **the site total does not move.**
+
+That interaction is the exercise. Everything else is in service of it.
+
+Prefer a terminal? [Prove it in 30 seconds](#prove-it) — the same commands run
+against the live API or a local stack.
 
 Design decisions and trade-offs: **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
 Deploying it: **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
@@ -37,23 +55,37 @@ rebuilds the demo dataset from scratch when you do want it back.
 | Metrics            | http://localhost:3000/metrics                  |
 | pgAdmin (optional) | `docker compose --profile tools up -d` → :5050 |
 
-Four sites are seeded at 15%, 45%, 85% and **130%** of their limits, so
-`Limit Exceeded` is visible immediately without ingesting anything.
+Four sites are seeded at roughly 15%, 45%, 85% and **130%** of their limits, so
+`Limit Exceeded` is visible immediately without ingesting anything. Those figures
+drift upward on the live demo as people ingest against it — which is the system
+working, not a seeding error.
 
 ---
 
 ## Prove it
 
-Copy-paste against a running stack. Each block is independent.
+Copy-paste against the live API or a local stack — set `API` and everything
+below is identical. Each block after this one is independent.
 
 ```bash
-API=http://localhost:3000
+# live
+API=https://hw-project-production.up.railway.app
+# or local, after `docker compose up`
+# API=http://localhost:3000
+
 SITE=$(curl -s $API/sites | python3 -c "import sys,json;print(json.load(sys.stdin)['data'][0]['id'])")
 KEY=$(uuidgen)
 
+# A device and instant unique to this run. The live API is shared, and readings
+# de-duplicate on (site, device, timestamp) — reusing a fixed pair would make
+# step 1 a no-op for the second person to try it, which is the mechanism working
+# but a confusing place to meet it.
+DEV="DEMO-$(uuidgen | head -c 8)"
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
 BATCH=$(cat <<JSON
 {"siteId":"$SITE","readings":[
-  {"deviceId":"DEMO-01","readingTs":"2026-08-09T12:00:00Z","ch4Kg":"100.0000","source":"sensor"}
+  {"deviceId":"$DEV","readingTs":"$TS","ch4Kg":"100.0000","source":"sensor"}
 ]}
 JSON
 )
@@ -129,6 +161,14 @@ pnpm db:verify
 Recomputes every site's total from the raw measurements and compares it against
 the stored summary. Exits non-zero on any drift, and says which direction — above
 means double-counting, below means a lost update.
+
+This one needs a database connection rather than the HTTP API, so it runs against
+a local stack by default. Point it at a deployment with an inline connection
+string:
+
+```bash
+DATABASE_URL="postgresql://…" pnpm db:verify
+```
 
 ---
 
