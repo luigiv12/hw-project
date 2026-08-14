@@ -73,20 +73,34 @@ describe('transactional outbox', () => {
     const site = await h.createSite('10.000');
 
     await h.ingest(site.id, [
-      reading({ deviceId: 'LIM', readingTs: '2026-08-09T01:00:00.000Z', ch4Kg: '6.0000' }),
+      reading({
+        deviceId: 'LIM',
+        readingTs: '2026-08-09T01:00:00.000Z',
+        ch4Kg: '6.0000',
+      }),
     ]);
     expect(
-      (await eventsFor(site.id)).filter((e) => e.eventType === 'site.limit_exceeded'),
+      (await eventsFor(site.id)).filter(
+        (e) => e.eventType === 'site.limit_exceeded',
+      ),
     ).toHaveLength(0);
 
     // Crosses the limit.
     await h.ingest(site.id, [
-      reading({ deviceId: 'LIM', readingTs: '2026-08-09T02:00:00.000Z', ch4Kg: '6.0000' }),
+      reading({
+        deviceId: 'LIM',
+        readingTs: '2026-08-09T02:00:00.000Z',
+        ch4Kg: '6.0000',
+      }),
     ]);
 
     // Already over; must not alert again.
     await h.ingest(site.id, [
-      reading({ deviceId: 'LIM', readingTs: '2026-08-09T03:00:00.000Z', ch4Kg: '6.0000' }),
+      reading({
+        deviceId: 'LIM',
+        readingTs: '2026-08-09T03:00:00.000Z',
+        ch4Kg: '6.0000',
+      }),
     ]);
 
     const breaches = (await eventsFor(site.id)).filter(

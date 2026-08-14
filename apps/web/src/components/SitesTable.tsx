@@ -2,16 +2,17 @@
 
 import { ComplianceStatus, type Site } from '@emissions/contracts';
 
+/**
+ * Display-only, so float is fine here: this drives the width of a bar, and no
+ * decision rests on it. `site.complianceStatus` is the authority on whether a
+ * site is in breach, decided server-side in exact decimal — a bar that rounds
+ * to 100% and a badge that says "Within Limit" is the correct rendering of a
+ * site sitting exactly at its limit.
+ */
 function utilisation(site: Site): number {
   const limit = Number(site.emissionLimitKg);
   if (!limit) return 0;
   return (Number(site.totalEmissionsToDateKg) / limit) * 100;
-}
-
-function compliance(site: Site): ComplianceStatus {
-  return Number(site.totalEmissionsToDateKg) > Number(site.emissionLimitKg)
-    ? ComplianceStatus.LIMIT_EXCEEDED
-    : ComplianceStatus.WITHIN_LIMIT;
 }
 
 const kg = (v: string) =>
@@ -25,7 +26,8 @@ export function SitesTable({ sites }: { sites: Site[] }) {
     return (
       <div className="card-body">
         <p style={{ color: 'var(--text-dim)', margin: 0 }}>
-          No sites yet. Seed the database with <code className="mono">pnpm db:seed</code>.
+          No sites yet. Seed the database with{' '}
+          <code className="mono">pnpm db:seed</code>.
         </p>
       </div>
     );
@@ -47,7 +49,7 @@ export function SitesTable({ sites }: { sites: Site[] }) {
         <tbody>
           {sites.map((site) => {
             const pct = utilisation(site);
-            const status = compliance(site);
+            const status = site.complianceStatus;
             const over = status === ComplianceStatus.LIMIT_EXCEEDED;
             const operator =
               typeof site.metadata?.operator === 'string'
@@ -76,9 +78,13 @@ export function SitesTable({ sites }: { sites: Site[] }) {
                     <span className="util-pct">{pct.toFixed(0)}%</span>
                   </div>
                 </td>
-                <td className="num">{site.measurementCount.toLocaleString()}</td>
+                <td className="num">
+                  {site.measurementCount.toLocaleString()}
+                </td>
                 <td>
-                  <span className={`badge ${over ? 'over' : 'ok'}`}>{status}</span>
+                  <span className={`badge ${over ? 'over' : 'ok'}`}>
+                    {status}
+                  </span>
                 </td>
               </tr>
             );

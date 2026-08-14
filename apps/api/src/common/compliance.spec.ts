@@ -1,10 +1,7 @@
 import { ComplianceStatus } from '@emissions/contracts';
 import { compareDecimalStrings } from './decimal';
 import { complianceFor } from './compliance';
-import {
-  hashIngestRequest,
-  normaliseDecimal,
-} from './canonical-hash';
+import { hashIngestRequest, normaliseDecimal } from './canonical-hash';
 import { gramsToKilogramsExact } from '@emissions/contracts';
 
 /**
@@ -37,7 +34,9 @@ describe('compareDecimalStrings', () => {
   });
 
   it('handles many decimal places without precision loss', () => {
-    expect(compareDecimalStrings('1000000000.0001', '1000000000.0002')).toBe(-1);
+    expect(compareDecimalStrings('1000000000.0001', '1000000000.0002')).toBe(
+      -1,
+    );
   });
 });
 
@@ -56,7 +55,9 @@ describe('complianceFor', () => {
   });
 
   it('handles a zero total', () => {
-    expect(complianceFor('0.0000', '1.000')).toBe(ComplianceStatus.WITHIN_LIMIT);
+    expect(complianceFor('0.0000', '1.000')).toBe(
+      ComplianceStatus.WITHIN_LIMIT,
+    );
   });
 });
 
@@ -122,7 +123,10 @@ describe('hashIngestRequest', () => {
   it('is stable across equivalent decimal spellings', () => {
     const respelled = {
       ...base,
-      readings: base.readings.map((r) => ({ ...r, ch4Kg: `${Number(r.ch4Kg)}` })),
+      readings: base.readings.map((r) => ({
+        ...r,
+        ch4Kg: `${Number(r.ch4Kg)}`,
+      })),
     };
     expect(hashIngestRequest(respelled)).toBe(hashIngestRequest(base));
   });

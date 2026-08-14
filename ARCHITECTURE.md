@@ -26,7 +26,7 @@ fails locally rather than in the Vercel or Railway build.
 the bonus tasks map onto first-party features — global filters and interceptors
 for the response envelope, `VersioningType.URI`, `@nestjs/cqrs` for the
 command/processor split, `@nestjs/schedule` adjacent to the outbox dispatcher.
-Drizzle over Prisma because the ingest path depends on emitting *specific* SQL —
+Drizzle over Prisma because the ingest path depends on emitting _specific_ SQL —
 `ON CONFLICT DO NOTHING`, `SELECT … FOR UPDATE`, `FOR UPDATE SKIP LOCKED` — and
 an ORM that abstracts those away would be working against the graded content.
 
@@ -148,17 +148,17 @@ inserter.
 
 On the duplicate path:
 
-| Condition | Response |
-|---|---|
-| `request_hash` differs | **409 `IDEMPOTENCY_KEY_REUSED`** |
-| `status = completed` | replay `response_snapshot`, `X-Idempotent-Replay: true` |
-| otherwise | `BATCH_IN_PROGRESS` (see §8) |
+| Condition              | Response                                                |
+| ---------------------- | ------------------------------------------------------- |
+| `request_hash` differs | **409 `IDEMPOTENCY_KEY_REUSED`**                        |
+| `status = completed`   | replay `response_snapshot`, `X-Idempotent-Replay: true` |
+| otherwise              | `BATCH_IN_PROGRESS` (see §8)                            |
 
 The stored response is replayed **verbatim, not recomputed**. Recomputing would
 let a later batch's totals leak into the answer for an earlier one — the client
 would see a number that was never true for its request.
 
-`request_hash` is SHA-256 over a *canonicalised* payload: readings sorted,
+`request_hash` is SHA-256 over a _canonicalised_ payload: readings sorted,
 timestamps normalised to epoch millis, insignificant decimal zeros stripped. A
 retry is not guaranteed to be byte-identical — a client may reserialise or
 reorder — and rejecting that as key reuse would break exactly the retry this
@@ -166,7 +166,7 @@ system exists to support.
 
 ### Layer 2 — reading identity
 
-A key only identifies a *request*. Two different requests can legitimately carry
+A key only identifies a _request_. Two different requests can legitimately carry
 the same readings, and Layer 1 must let the second through, because at the
 request level it genuinely is new. Only reading-level identity stops the
 double-count.
@@ -179,7 +179,7 @@ UNIQUE (site_id, reading_id, reading_ts) WHERE reading_id IS NOT NULL  -- author
 ```
 
 **Why two.** Only the producer can know whether two readings describe the same
-physical event. `(site, device, timestamp)` is a server-side *guess* at that — it
+physical event. `(site, device, timestamp)` is a server-side _guess_ at that — it
 is right for a sensor emitting at most one reading per instant, and wrong for one
 that does not. So `readingId` is authoritative where supplied, and the natural
 key is the fallback for producers that cannot supply one, which is all v1
@@ -235,7 +235,7 @@ delta is summed from the rows that actually landed, so anything step 3b rejected
 is excluded without the application reasoning about it.
 
 Step 3a runs **before** the insert, not after. It withholds readings the schema
-cannot adjudicate (see *When neither layer can decide*), so they are never stored
+cannot adjudicate (see _When neither layer can decide_), so they are never stored
 and never reach the sum — checking afterwards would report a conflict for a row
 already counted.
 
@@ -302,8 +302,11 @@ cut.
 The ingest transaction takes a **pessimistic row lock on the site, first**:
 
 ```ts
-const [site] = await tx.select().from(sites)
-  .where(eq(sites.id, input.siteId)).for('update');
+const [site] = await tx
+  .select()
+  .from(sites)
+  .where(eq(sites.id, input.siteId))
+  .for('update');
 ```
 
 Being precise about what this does and does not buy, since it is easy to
@@ -313,7 +316,7 @@ overclaim:
 statement; Postgres locks the row for its duration, so concurrent increments
 cannot interleave.
 
-**The read-then-decide does.** Limit-breach detection reads the total *before* the
+**The read-then-decide does.** Limit-breach detection reads the total _before_ the
 update and compares after:
 
 ```ts
@@ -324,7 +327,7 @@ if (wasWithinLimit && nowExceeded) → emit site.limit_exceeded
 
 Without the lock, two concurrent batches could both observe "within limit", both
 push the site over, and both alert — two notifications for one crossing. The lock
-also guarantees the duplicate-replay path reads a *committed* batch rather than
+also guarantees the duplicate-replay path reads a _committed_ batch rather than
 racing one in flight.
 
 **Pessimistic, not optimistic.** Every writer for a site touches the same counter
@@ -383,7 +386,7 @@ A claim is an `UPDATE … SET claimed_at = now()` wrapped around a
 `SELECT … FOR UPDATE SKIP LOCKED`, in one statement.
 
 `SKIP LOCKED` alone is not enough, and it is worth being precise about why.
-It excludes dispatchers that are selecting *at the same instant*, but the lock
+It excludes dispatchers that are selecting _at the same instant_, but the lock
 lives only as long as the claiming transaction — and delivery is an HTTP call
 made after that transaction commits. The interval that actually needs protecting
 is the one the lock has already stopped covering. So the claim is written into
@@ -430,10 +433,10 @@ once, not once per batch forever after.
 URI versioning, and **no `defaultVersion`** — every route declares what it
 answers to, so nothing resolves by implication.
 
-| Route | Versions |
-|---|---|
-| `/sites`, `/sites/:id/metrics` | version-neutral + v1 + v2 |
-| `/ingest` | v1 and v2 only — unversioned **404s** |
+| Route                          | Versions                              |
+| ------------------------------ | ------------------------------------- |
+| `/sites`, `/sites/:id/metrics` | version-neutral + v1 + v2             |
+| `/ingest`                      | v1 and v2 only — unversioned **404s** |
 
 Sites and metrics are identical across versions, so there is nothing to
 disambiguate and the brief's unversioned URLs work as written.
@@ -476,7 +479,7 @@ Applied by a **global** interceptor and exception filter, never per controller.
 A guarantee each team has to remember to opt into is not a guarantee — this way
 no handler can ship a different shape, including handlers nobody has written yet.
 
-`data` is the payload and nothing else. Anything *about* the response — paging,
+`data` is the payload and nothing else. Anything _about_ the response — paging,
 timing, correlation — belongs in `meta`, so a field can be added to `meta`
 without changing the shape of any payload.
 
@@ -506,7 +509,7 @@ Paginated endpoints take `?limit=&cursor=` and answer with the page details in
   one request away from being a denial of service against itself.
 - **Cursors are keyset, not offsets.** An offset shifts when rows are inserted or
   reordered between pages, silently skipping or repeating records; a cursor names
-  a position in the sort order and cannot. This requires a *total* ordering — one
+  a position in the sort order and cannot. This requires a _total_ ordering — one
   with no ties — which is why site listing orders by `(name, id)`.
 - A cursor is opaque. Clients hand back what they were given and never construct
   or parse one, which leaves the ordering free to change.
@@ -530,18 +533,18 @@ the client's author may never read.
 **Money is never a float.** Regulatory quantities are `numeric` in Postgres and
 **decimal strings on the wire**, never JSON numbers. Serialising through a
 float64 would reintroduce exactly the rounding the column type exists to avoid.
-Compliance comparison is exact decimal via BigInt, and a site *at* its limit is
+Compliance comparison is exact decimal via BigInt, and a site _at_ its limit is
 within it — "Limit Exceeded" requires strictly greater.
 
 **Observability (bonus #6)** — `emissions_ingest_duplicate_total` is split by the
 layer that caught it, because conflating them hides which defence is working:
 
-| `reason` | Meaning |
-|---|---|
+| `reason`            | Meaning                                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
 | `idempotent_replay` | Layer 1. Expected and benign; the number to watch when clients report timeouts |
-| `key_reused` | Layer 1. A client bug — this one deserves an alert |
-| `duplicate_reading` | Layer 2, per reading. A steady rate means a device is replaying its buffer |
-| `value_conflict` | Neither layer could decide; a measurement was **not** stored |
+| `key_reused`        | Layer 1. A client bug — this one deserves an alert                             |
+| `duplicate_reading` | Layer 2, per reading. A steady rate means a device is replaying its buffer     |
+| `value_conflict`    | Neither layer could decide; a measurement was **not** stored                   |
 
 ---
 
@@ -585,7 +588,7 @@ rather than left looking like live code.
 ### `readingId` is unique per (site, timestamp), not per site
 
 Re-sending the same `readingId` with a **different** timestamp stores and counts
-both readings. The same id at the *same* timestamp is correctly detected.
+both readings. The same id at the _same_ timestamp is correctly detected.
 
 **Cause.** Postgres requires every unique constraint on a partitioned table to
 contain the partition key, so the identity index is necessarily
@@ -600,7 +603,7 @@ miss because the index looks correct in isolation.
 — v1 sensors and the seed — do not send one; only the dashboard's manual ingest
 form can. Reaching the hole requires re-sending one id under a changed timestamp,
 which a human filling a form will not do by accident. The realistic future
-trigger is firmware that stamps at *send* time rather than *sample* time, so
+trigger is firmware that stamps at _send_ time rather than _sample_ time, so
 retries carry fresh timestamps.
 
 **The fix, if needed:** a non-partitioned `measurement_identities (site_id,
@@ -640,19 +643,19 @@ would want to accept and propagate it rather than invent a header.
 
 ### Writes to one site are serialised
 
-The brief asks for concurrency *safety* and storage *volume* — "high-concurrency
+The brief asks for concurrency _safety_ and storage _volume_ — "high-concurrency
 updates", "10 concurrent sources updating the same `site_id`", "100M+ rows". It
 does not state a throughput requirement, and this design trades per-site write
 throughput for correctness deliberately.
 
 The row lock in §3 means writes to a single site proceed one at a time. Writes to
-*different* sites take different locks and do not contend.
+_different_ sites take different locks and do not contend.
 
 A rough local probe — 40 concurrent batches of 50 readings — showed no
 measurable difference between targeting one site and spreading across four
 (~33 batches/s either way). That number is not a benchmark: the harness forked 40
 `curl` processes, so it very likely measured the client. The useful signal is the
-*shape* — per-site serialisation cost nothing detectable, meaning the lock is
+_shape_ — per-site serialisation cost nothing detectable, meaning the lock is
 held for a small fraction of request time and is not the first thing that would
 bind.
 
@@ -674,8 +677,8 @@ the requirement, and the ceiling is a consequence of it rather than an oversight
 ### Idempotency keys are never expired
 
 `ingestion_batches` grows one row per batch indefinitely. Real implementations
-expire these — Stripe retains 24 hours — because a key identifies a *delivery
-attempt*, not a permanent entity. Production wants range partitioning on
+expire these — Stripe retains 24 hours — because a key identifies a _delivery
+attempt_, not a permanent entity. Production wants range partitioning on
 `created_at` with a retention policy. `readingId` has no such option; it is the
 row's identity and lives as long as the measurement.
 
@@ -773,10 +776,10 @@ database behaviour.
 
 The two that matter:
 
-| Test | Asserts |
-|---|---|
+| Test                           | Asserts                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------ |
 | 10 identical requests, one key | exactly one applied, nine replayed **byte-identically**, total +200 once |
-| 10 distinct batches, one site | all ten applied, total exactly +100 — no lost updates |
+| 10 distinct batches, one site  | all ten applied, total exactly +100 — no lost updates                    |
 
 Every integration test ends by asserting the denormalised summary **and** the
 recomputed `SUM(measurements)` both match; checking one alone would miss a bug

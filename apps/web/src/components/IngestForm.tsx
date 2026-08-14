@@ -1,7 +1,11 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { ingestSchema, type IngestResult, type Site } from '@emissions/contracts';
+import {
+  ingestSchema,
+  type IngestResult,
+  type Site,
+} from '@emissions/contracts';
 import { ApiRequestError, NetworkError, ingest } from '@/lib/api';
 
 type Reading = {
@@ -25,7 +29,13 @@ type Reading = {
 type Outcome =
   | { kind: 'idle' }
   | { kind: 'ok'; result: IngestResult; replayed: boolean }
-  | { kind: 'error'; title: string; detail: string; code?: string; fields?: string[] };
+  | {
+      kind: 'error';
+      title: string;
+      detail: string;
+      code?: string;
+      fields?: string[];
+    };
 
 /**
  * `datetime-local` wants a zone-less "YYYY-MM-DDTHH:mm:ss".
@@ -246,8 +256,8 @@ export function IngestForm({
             <label htmlFor="drop">Simulate a dropped response</label>
             <p>
               The batch still reaches the server and commits — only the reply is
-              discarded, exactly as a field device experiences a timeout. Submit,
-              then press Retry: the site total will not move.
+              discarded, exactly as a field device experiences a timeout.
+              Submit, then press Retry: the site total will not move.
             </p>
           </div>
         </div>
@@ -281,8 +291,8 @@ export function IngestForm({
           <div className="alert replay">
             <strong>Recognised as a duplicate — recorded once</strong>
             The server had already applied this batch and replayed its original
-            response. {outcome.result.readingsAccepted} reading(s) were stored on
-            the first attempt; the site total is unchanged at{' '}
+            response. {outcome.result.readingsAccepted} reading(s) were stored
+            on the first attempt; the site total is unchanged at{' '}
             <code>{outcome.result.totalEmissionsToDateKg} kg</code>.
           </div>
         )}
@@ -293,9 +303,9 @@ export function IngestForm({
               {outcome.result.conflicts.length} reading(s) were NOT stored
             </strong>
             Each collided with a stored reading carrying a different mass, so it
-            could not be a retry — two distinct measurements are competing for one
-            identity. Send a <code>readingId</code> so the device decides what
-            counts as the same reading.
+            could not be a retry — two distinct measurements are competing for
+            one identity. Send a <code>readingId</code> so the device decides
+            what counts as the same reading.
             <ul>
               {outcome.result.conflicts.map((c) => (
                 <li key={`${c.deviceId}-${c.readingTs}`}>
@@ -312,16 +322,15 @@ export function IngestForm({
         {outcome.kind === 'ok' && !outcome.replayed && (
           <div className="alert ok">
             <strong>Batch accepted</strong>
-            {outcome.result.readingsAccepted} of {outcome.result.readingsSubmitted}{' '}
-            reading(s) stored
-            {outcome.result.readingsAccepted < outcome.result.readingsSubmitted && (
-              <>
-                {' '}
-                — the rest were already present and were not counted again
-              </>
+            {outcome.result.readingsAccepted} of{' '}
+            {outcome.result.readingsSubmitted} reading(s) stored
+            {outcome.result.readingsAccepted <
+              outcome.result.readingsSubmitted && (
+              <> — the rest were already present and were not counted again</>
             )}
-            . Site total is now <code>{outcome.result.totalEmissionsToDateKg} kg</code>{' '}
-            ({outcome.result.complianceStatus}).
+            . Site total is now{' '}
+            <code>{outcome.result.totalEmissionsToDateKg} kg</code> (
+            {outcome.result.complianceStatus}).
           </div>
         )}
 
@@ -453,7 +462,11 @@ export function IngestForm({
           </button>
 
           {canRetry && (
-            <button className="secondary" disabled={busy} onClick={() => void submit(true)}>
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() => void submit(true)}
+            >
               Retry with the same key
             </button>
           )}
@@ -471,8 +484,8 @@ export function IngestForm({
         </div>
 
         <p className="hint">
-          A batch carries at most 100 readings. Without a <code>readingId</code>,
-          readings are de-duplicated on (site, device, timestamp) — so
+          A batch carries at most 100 readings. Without a <code>readingId</code>
+          , readings are de-duplicated on (site, device, timestamp) — so
           resubmitting the same reading never counts twice, even under a
           different key. Times are entered to the second here; the API stores to
           the millisecond. A device that samples faster than that must send a{' '}

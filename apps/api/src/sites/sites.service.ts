@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, gte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, lte, sql } from 'drizzle-orm';
 import {
   ErrorCode,
   type CreateSiteInput,
@@ -90,19 +90,29 @@ export class SitesService {
    * measurements. At the 100M-row scale this system is designed for, summing the
    * partitions on every dashboard poll would not be viable.
    *
-   * The 24-hour window genuinely is aggregated, but it touches at most two
-   * monthly partitions and is bounded by the site+time index.
+   * The 24-hour window genuinely is aggregated, but it is closed at both ends,
+   * so it touches at most two monthly partitions and is bounded by the site+time
+   * index.
    */
   async getMetrics(id: string): Promise<SiteMetrics> {
     const site = await this.requireSite(id);
 
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const now = new Date();
+    const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
     /**
-     * The only aggregate on this path, and it is bounded by `reading_ts`, so
-     * Postgres prunes to the one or two partitions the window spans. The
-     * cumulative total, the row count, and the reading span all come from the
-     * site row, maintained transactionally by ingest.
+     * The only aggregate on this path, and it is closed at both ends.
+     *
+     * The upper bound is doing real work. Nothing rejects a reading timestamped
+     * in the future — a device with a skewed clock produces them — and an
+     * open-ended window would count those as "the last 24 hours" indefinitely,
+     * however far ahead they sit. It also restores partition pruning: with only
+     * a lower bound Postgres must consider every partition from `since` forward,
+     * including DEFAULT and any future months, rather than the one or two the
+     * window actually spans.
+     *
+     * The cumulative total, the row count, and the reading span all come from
+     * the site row, maintained transactionally by ingest.
      */
     const [recent] = await this.db
       .select({
@@ -110,7 +120,11 @@ export class SitesService {
       })
       .from(measurements)
       .where(
-        and(eq(measurements.siteId, id), gte(measurements.readingTs, since)),
+        and(
+          eq(measurements.siteId, id),
+          gte(measurements.readingTs, since),
+          lte(measurements.readingTs, now),
+        ),
       );
 
     const totalKg = Number(site.totalEmissionsToDateKg);
@@ -154,6 +168,10 @@ function toSite(row: SiteRow): Site {
     emissionLimitKg: row.emissionLimitKg,
     totalEmissionsToDateKg: row.totalEmissionsToDateKg,
     measurementCount: row.measurementCount,
+    complianceStatus: complianceFor(
+      row.totalEmissionsToDateKg,
+      row.emissionLimitKg,
+    ),
     metadata: row.metadata,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),

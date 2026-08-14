@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Site } from '@emissions/contracts';
+import { ComplianceStatus, type Site } from '@emissions/contracts';
 import { ApiRequestError, NetworkError, listSites } from './api';
 
 const site = (name: string): Site => ({
@@ -8,6 +8,7 @@ const site = (name: string): Site => ({
   emissionLimitKg: '1000.000',
   totalEmissionsToDateKg: '0.0000',
   measurementCount: 0,
+  complianceStatus: ComplianceStatus.WITHIN_LIMIT,
   metadata: {},
   createdAt: '2026-08-01T00:00:00.000Z',
   updatedAt: '2026-08-01T00:00:00.000Z',
@@ -31,7 +32,9 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('listSites', () => {
   it('returns a single page without asking for another', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(envelope([site('a'), site('b')]));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(envelope([site('a'), site('b')]));
     vi.stubGlobal('fetch', fetchMock);
 
     const sites = await listSites();
@@ -71,7 +74,9 @@ describe('listSites', () => {
   });
 
   it('stops rather than looping forever if the cursor never clears', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(envelope([site('a')], 'always'));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(envelope([site('a')], 'always'));
     vi.stubGlobal('fetch', fetchMock);
 
     const sites = await listSites();

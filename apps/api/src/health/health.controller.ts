@@ -1,4 +1,10 @@
-import { Controller, Get, Inject, Version, VERSION_NEUTRAL } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Inject,
+  Version,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DB, type Database } from '../db/db.module';
 

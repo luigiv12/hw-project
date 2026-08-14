@@ -23,11 +23,11 @@ services in the same project can reference each other's variables.
 
 Settings that matter, and why:
 
-| Setting | Value |
-|---|---|
-| Root Directory | **`/`** — *not* `apps/api` |
-| Dockerfile Path | `apps/api/Dockerfile` |
-| Healthcheck Path | `/health` |
+| Setting          | Value                      |
+| ---------------- | -------------------------- |
+| Root Directory   | **`/`** — _not_ `apps/api` |
+| Dockerfile Path  | `apps/api/Dockerfile`      |
+| Healthcheck Path | `/health`                  |
 
 **The root directory is the one people get wrong.** The Dockerfile installs with
 pnpm and needs `pnpm-lock.yaml` and `pnpm-workspace.yaml`, which live at the repo
@@ -96,11 +96,11 @@ reviewer having to ingest anything.
 
 **Add New → Project →** this repository.
 
-| Setting | Value |
-|---|---|
-| Framework | Next.js (auto-detected) |
-| Root Directory | **`apps/web`** |
-| Build Command | `pnpm --filter @emissions/web build` |
+| Setting         | Value                                             |
+| --------------- | ------------------------------------------------- |
+| Framework       | Next.js (auto-detected)                           |
+| Root Directory  | **`apps/web`**                                    |
+| Build Command   | `pnpm --filter @emissions/web build`              |
 | Install Command | leave default — Vercel handles the pnpm workspace |
 
 Nothing to configure for the Next output mode. `output: 'standalone'` produces a
@@ -134,7 +134,7 @@ page does nothing.
 
 A production build without `NEXT_PUBLIC_API_URL` **fails** rather than falling
 back to `localhost`. That fallback exists for `pnpm dev`; inlined into a
-deployed bundle it produces a dashboard reaching for the *viewer's* machine,
+deployed bundle it produces a dashboard reaching for the _viewer's_ machine,
 which renders correctly at first paint — server rendering uses the other
 variable — and then raises a local-network permission prompt in the browser.
 

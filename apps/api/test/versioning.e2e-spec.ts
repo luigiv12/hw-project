@@ -51,18 +51,16 @@ describe('API versioning', () => {
     it('converts grams to kilograms exactly and epoch seconds to an instant', async () => {
       const site = await h.createSite();
 
-      const res = await h.http
-        .post('/v1/ingest')
-        .send({
-          site_id: site.id,
-          batch_id: randomUUID(),
-          readings: [
-            { device_id: 'LEGACY-1', ts: 1786320000, ch4_g: 8200 },
-            // 8.2 g. Naive float division gives 0.008199999999999999; the
-            // conversion shifts the decimal as a string instead.
-            { device_id: 'LEGACY-1', ts: 1786323600, ch4_g: 8.2 },
-          ],
-        });
+      const res = await h.http.post('/v1/ingest').send({
+        site_id: site.id,
+        batch_id: randomUUID(),
+        readings: [
+          { device_id: 'LEGACY-1', ts: 1786320000, ch4_g: 8200 },
+          // 8.2 g. Naive float division gives 0.008199999999999999; the
+          // conversion shifts the decimal as a string instead.
+          { device_id: 'LEGACY-1', ts: 1786323600, ch4_g: 8.2 },
+        ],
+      });
 
       expect(res.status).toBe(200);
       expect(result(res.body).readingsAccepted).toBe(2);

@@ -49,7 +49,9 @@ describe('platform contract', () => {
 
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
       const paths = res.body.error.details.map((d: { path: string }) => d.path);
-      expect(paths).toEqual(expect.arrayContaining(['name', 'emissionLimitKg']));
+      expect(paths).toEqual(
+        expect.arrayContaining(['name', 'emissionLimitKg']),
+      );
     });
 
     it('propagates an inbound request id for log correlation', async () => {
@@ -69,7 +71,9 @@ describe('platform contract', () => {
 
       expect(res.status).toBeGreaterThanOrEqual(400);
       expect(res.body).toHaveProperty('error.code');
-      expect(JSON.stringify(res.body)).not.toMatch(/at .*\.ts:\d+|postgresql:\/\//);
+      expect(JSON.stringify(res.body)).not.toMatch(
+        /at .*\.ts:\d+|postgresql:\/\//,
+      );
     });
   });
 
@@ -84,7 +88,9 @@ describe('platform contract', () => {
        * exact decimal, not float, because this is the value a regulator sees.
        */
       const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
-      expect(res.body.data.complianceStatus).toBe(ComplianceStatus.WITHIN_LIMIT);
+      expect(res.body.data.complianceStatus).toBe(
+        ComplianceStatus.WITHIN_LIMIT,
+      );
       expect(res.body.data.utilizationPct).toBe(100);
     });
 
@@ -93,7 +99,63 @@ describe('platform contract', () => {
       await h.ingest(site.id, [reading({ ch4Kg: '100.0001' })]);
 
       const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
-      expect(res.body.data.complianceStatus).toBe(ComplianceStatus.LIMIT_EXCEEDED);
+      expect(res.body.data.complianceStatus).toBe(
+        ComplianceStatus.LIMIT_EXCEEDED,
+      );
+    });
+
+    it('reports the same status on the site resource as on its metrics', async () => {
+      const site = await h.createSite('100.000');
+      await h.ingest(site.id, [reading({ ch4Kg: '100.0000' })]);
+
+      /**
+       * Served on both, decided once. A client re-deriving the rule from
+       * `totalEmissionsToDateKg` and `emissionLimitKg` would be comparing in
+       * float64 — and this boundary, exactly at the limit, is where a second
+       * implementation is most likely to disagree.
+       */
+      const [one, metrics] = await Promise.all([
+        h.http.get(`/sites/${site.id}`).expect(200),
+        h.http.get(`/sites/${site.id}/metrics`).expect(200),
+      ]);
+
+      expect(one.body.data.complianceStatus).toBe(
+        ComplianceStatus.WITHIN_LIMIT,
+      );
+      expect(one.body.data.complianceStatus).toBe(
+        metrics.body.data.complianceStatus,
+      );
+
+      const list = await h.http.get('/sites?limit=100').expect(200);
+      const listed = list.body.data.find(
+        (s: { id: string }) => s.id === site.id,
+      );
+      expect(listed.complianceStatus).toBe(ComplianceStatus.WITHIN_LIMIT);
+    });
+
+    it('excludes a future-dated reading from the 24-hour window', async () => {
+      const site = await h.createSite('100000.000');
+      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      await h.ingest(site.id, [
+        reading({
+          deviceId: 'SKEW',
+          readingTs: tomorrow.toISOString(),
+          ch4Kg: '42.0000',
+        }),
+      ]);
+
+      /**
+       * Nothing rejects a reading stamped in the future — a device with a skewed
+       * clock produces them — so the window is closed at both ends. Counting one
+       * as "the last 24 hours" would misreport recent activity indefinitely,
+       * however far ahead it sits.
+       */
+      const res = await h.http.get(`/sites/${site.id}/metrics`).expect(200);
+      expect(Number(res.body.data.last24hCh4Kg)).toBe(0);
+
+      // Still part of the cumulative total — excluded from the window, not lost.
+      expect(Number(res.body.data.totalEmissionsToDateKg)).toBe(42);
     });
 
     it('names the site id consistently with the sites endpoint', async () => {
@@ -162,7 +224,10 @@ describe('platform contract', () => {
     });
 
     it('carries a request id, like every other route', async () => {
-      const res = await h.http.get('/').set('X-Request-Id', 'root-trace').expect(200);
+      const res = await h.http
+        .get('/')
+        .set('X-Request-Id', 'root-trace')
+        .expect(200);
 
       expect(res.body.meta.requestId).toBe('root-trace');
       expect(res.headers['x-request-id']).toBe('root-trace');
@@ -243,7 +308,9 @@ describe('platform contract', () => {
       await h.createSite();
 
       const second = await h.http
-        .get(`/sites?limit=2&cursor=${encodeURIComponent(first.body.meta.page.nextCursor)}`)
+        .get(
+          `/sites?limit=2&cursor=${encodeURIComponent(first.body.meta.page.nextCursor)}`,
+        )
         .expect(200);
 
       const secondIds = second.body.data.map((s: { id: string }) => s.id);
@@ -256,7 +323,9 @@ describe('platform contract', () => {
     });
 
     it('refuses a limit above the maximum', async () => {
-      const res = await h.http.get(`/sites?limit=${MAX_PAGE_SIZE + 1}`).expect(400);
+      const res = await h.http
+        .get(`/sites?limit=${MAX_PAGE_SIZE + 1}`)
+        .expect(400);
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
     });
 
@@ -267,7 +336,9 @@ describe('platform contract', () => {
     });
 
     it('rejects a malformed cursor rather than silently starting over', async () => {
-      const res = await h.http.get('/sites?cursor=not-a-real-cursor').expect(400);
+      const res = await h.http
+        .get('/sites?cursor=not-a-real-cursor')
+        .expect(400);
 
       expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
       expect(res.body.error.details[0].path).toBe('cursor');
@@ -278,18 +349,21 @@ describe('platform contract', () => {
       ['wrong arity', ['only-one']],
       ['wrong types', [1, 2]],
       ['not an array', { name: 'x', id: 'y' }],
-    ])('rejects a decodable cursor with %s as bad input, not a server error', async (_label, payload) => {
-      const cursor = Buffer.from(JSON.stringify(payload), 'utf8').toString(
-        'base64url',
-      );
+    ])(
+      'rejects a decodable cursor with %s as bad input, not a server error',
+      async (_label, payload) => {
+        const cursor = Buffer.from(JSON.stringify(payload), 'utf8').toString(
+          'base64url',
+        );
 
-      const res = await h.http.get(`/sites?cursor=${cursor}`);
+        const res = await h.http.get(`/sites?cursor=${cursor}`);
 
-      // A cursor is client-supplied. Anything that reaches the database from it
-      // must be validated first, or bad input surfaces as a 500.
-      expect(res.status).toBe(400);
-      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
-    });
+        // A cursor is client-supplied. Anything that reaches the database from it
+        // must be validated first, or bad input surfaces as a 500.
+        expect(res.status).toBe(400);
+        expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      },
+    );
   });
 
   describe('reading window', () => {

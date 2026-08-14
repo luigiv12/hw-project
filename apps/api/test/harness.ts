@@ -110,7 +110,10 @@ export class Harness {
 
   /** The denormalised summary, straight from the site row. */
   async storedTotal(siteId: string): Promise<{ kg: string; count: number }> {
-    const [row] = await this.db.select().from(sites).where(eq(sites.id, siteId));
+    const [row] = await this.db
+      .select()
+      .from(sites)
+      .where(eq(sites.id, siteId));
     return { kg: row.totalEmissionsToDateKg, count: row.measurementCount };
   }
 
@@ -154,7 +157,11 @@ export class Harness {
   }
 
   /** Asserts the summary and the raw rows agree, and match what was expected. */
-  async expectReconciled(siteId: string, expectedKg: string, expectedCount: number) {
+  async expectReconciled(
+    siteId: string,
+    expectedKg: string,
+    expectedCount: number,
+  ) {
     const stored = await this.storedTotal(siteId);
     const computed = await this.computedTotal(siteId);
 

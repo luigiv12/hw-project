@@ -5,7 +5,7 @@ Highwood engineering challenge.
 
 **The thing to look at is the retry behaviour.** A field device that times out and
 retries must never double-count an emission. [Prove it in 30 seconds](#prove-it)
-below, or open the dashboard, tick *"Simulate a dropped response"*, submit, and
+below, or open the dashboard, tick _"Simulate a dropped response"_, submit, and
 press **Retry** — the batch is recognised as a duplicate and the site total does
 not move.
 
@@ -26,11 +26,15 @@ docker compose up
 That is the whole setup. Postgres starts, migrations apply, demo data seeds, then
 the API and dashboard come up in dependency order.
 
-| | |
-|---|---|
-| Dashboard | http://localhost:3001 |
-| API | http://localhost:3000 |
-| Metrics | http://localhost:3000/metrics |
+Bringing the stack up again does **not** re-seed: compose seeds only when the
+database has no sites, so anything you ingest survives a restart. `pnpm db:seed`
+rebuilds the demo dataset from scratch when you do want it back.
+
+|                    |                                                |
+| ------------------ | ---------------------------------------------- |
+| Dashboard          | http://localhost:3001                          |
+| API                | http://localhost:3000                          |
+| Metrics            | http://localhost:3000/metrics                  |
 | pgAdmin (optional) | `docker compose --profile tools up -d` → :5050 |
 
 Four sites are seeded at 15%, 45%, 85% and **130%** of their limits, so
@@ -169,9 +173,11 @@ Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 ## Tests
 
 ```bash
-pnpm test          # 122 tests: 106 API, 16 dashboard
+pnpm verify        # everything below, in one command
+pnpm test          # 127 tests: 111 API, 16 dashboard
 pnpm lint          # eslint across the workspace
 pnpm typecheck     # every package
+pnpm format:check  # prettier
 ```
 
 Runs against the compose Postgres — no mocks, because what is under test
@@ -203,17 +209,18 @@ cd apps/api && pnpm dev                 # :3000, watch mode
 cd apps/web && pnpm dev                 # :3001
 ```
 
-| Script | |
-|---|---|
-| `pnpm test` | full suite — API and dashboard |
-| `pnpm lint` / `lint:fix` | eslint across the workspace |
-| `pnpm format` | prettier |
-| `pnpm db:migrate` | apply migrations |
-| `pnpm db:seed` | reset demo data |
-| `pnpm db:verify` | reconcile summaries against measurements |
-| `pnpm --filter @emissions/api db:studio` | browse the database at :4983 |
-| `pnpm infra:up` / `infra:down` | Postgres + Redis only |
-| `pnpm infra:reset` | destroy volumes and restart |
+| Script                                   |                                          |
+| ---------------------------------------- | ---------------------------------------- |
+| `pnpm verify`                            | format, lint, typecheck and test         |
+| `pnpm test`                              | full suite — API and dashboard           |
+| `pnpm lint` / `lint:fix`                 | eslint across the workspace              |
+| `pnpm format` / `format:check`           | prettier                                 |
+| `pnpm db:migrate`                        | apply migrations                         |
+| `pnpm db:seed`                           | rebuild demo data — **destructive**      |
+| `pnpm db:verify`                         | reconcile summaries against measurements |
+| `pnpm --filter @emissions/api db:studio` | browse the database at :4983             |
+| `pnpm infra:up` / `infra:down`           | Postgres + Redis only                    |
+| `pnpm infra:reset`                       | destroy volumes and restart              |
 
 Any `db:*` script accepts an inline connection string, which is how to point one
 at a deployed database:

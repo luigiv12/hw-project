@@ -3,7 +3,6 @@ import type {
   IngestInput,
   IngestResult,
   Site,
-  SiteMetrics,
 } from '@emissions/contracts';
 
 /**
@@ -51,7 +50,8 @@ function resolveApiBase(): string {
 
   // Server Components run inside the deployment and may use a private address;
   // the browser cannot, so it only ever gets the public one.
-  const serverUrl = process.env.API_URL_INTERNAL ?? process.env.NEXT_PUBLIC_API_URL;
+  const serverUrl =
+    process.env.API_URL_INTERNAL ?? process.env.NEXT_PUBLIC_API_URL;
   const browserUrl = process.env.NEXT_PUBLIC_API_URL;
 
   const configured = typeof window === 'undefined' ? serverUrl : browserUrl;
@@ -166,10 +166,6 @@ export async function listSites(): Promise<Site[]> {
   }
 
   return sites;
-}
-
-export async function getSiteMetrics(id: string): Promise<SiteMetrics> {
-  return (await request<SiteMetrics>(`/sites/${id}/metrics`)).value;
 }
 
 /**
