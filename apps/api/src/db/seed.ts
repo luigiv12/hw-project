@@ -47,8 +47,8 @@ const SEED_SITES: SeedSite[] = [
       basin: 'Duvernay',
       province: 'AB',
     },
-    // ~85% of limit — close enough to matter, so the utilisation bar earns its place.
-    perReadingKg: 15.18,
+    // 85% of limit — close enough to matter, so the utilisation bar earns its place.
+    perReadingKg: 11.79,
     devices: ['FC12-METH-01', 'FC12-METH-02'],
     expectBreach: false,
   },
@@ -61,8 +61,8 @@ const SEED_SITES: SeedSite[] = [
       basin: 'Montney',
       province: 'AB',
     },
-    // ~45% of limit.
-    perReadingKg: 12.86,
+    // 45% of limit.
+    perReadingKg: 10.01,
     devices: ['PRC-METH-01', 'PRC-METH-02', 'PRC-SAT-01'],
     expectBreach: false,
   },
@@ -78,8 +78,8 @@ const SEED_SITES: SeedSite[] = [
       province: 'AB',
       note: 'flare efficiency degraded',
     },
-    // ~130% of limit — the breach a reviewer should see on first load.
-    perReadingKg: 18.57,
+    // 130% of limit — the breach a reviewer should see on first load.
+    perReadingKg: 14.45,
     devices: ['CB7-METH-01'],
     expectBreach: true,
   },
@@ -88,8 +88,8 @@ const SEED_SITES: SeedSite[] = [
     name: 'Grande Prairie Gathering Line 3',
     emissionLimitKg: '8000.000',
     metadata: { operator: 'Slate Resources', basin: 'Montney', province: 'AB' },
-    // ~15% of limit.
-    perReadingKg: 4.29,
+    // 15% of limit.
+    perReadingKg: 3.33,
     devices: ['GP3-METH-01', 'GP3-METH-02'],
     expectBreach: false,
   },
@@ -265,34 +265,38 @@ function buildReadings(site: SeedSite) {
 
   const now = new Date();
 
-  for (let monthsAgo = MONTHS_OF_HISTORY - 1; monthsAgo >= 0; monthsAgo--) {
-    const monthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1),
-    );
+  /**
+   * A fixed count per device, counted back from now — not "whatever falls inside
+   * the last three calendar months".
+   *
+   * Anchoring to month boundaries makes the volume a function of today's date:
+   * the current month fills as it progresses, so every site's total, and its
+   * percentage of limit, climbs through the month and resets on the 1st. That
+   * makes the seeded picture — and the percentages this README quotes — depend
+   * on when someone happens to run it, and it puts `expectBreach` on a collision
+   * course with the calendar.
+   */
+  const READINGS_PER_DEVICE = READINGS_PER_DEVICE_PER_MONTH * MONTHS_OF_HISTORY;
 
-    for (const deviceId of site.devices) {
-      const batchId = crypto.randomUUID();
+  for (const deviceId of site.devices) {
+    const batchId = crypto.randomUUID();
 
-      for (let i = 0; i < READINGS_PER_DEVICE_PER_MONTH; i++) {
-        const ts = new Date(monthStart);
-        ts.setUTCHours(ts.getUTCHours() + i * 12);
+    for (let i = 0; i < READINGS_PER_DEVICE; i++) {
+      // Every 12 hours going back, so the series spans ~90 days and lands across
+      // three or four monthly partitions.
+      const ts = new Date(now.getTime() - i * 12 * 60 * 60 * 1000);
 
-        // Skip anything that would land in the future — a reading with a
-        // timestamp ahead of now would be nonsense in a compliance record.
-        if (ts > now) continue;
+      // Deterministic wobble so the data looks like instrument readings
+      // rather than a constant, without pulling in a PRNG dependency.
+      const wobble = 1 + Math.sin(i * 1.7 + deviceId.length) * 0.25;
 
-        // Deterministic wobble so the data looks like instrument readings
-        // rather than a constant, without pulling in a PRNG dependency.
-        const wobble = 1 + Math.sin(i * 1.7 + deviceId.length) * 0.25;
-
-        rows.push({
-          deviceId,
-          ts,
-          ch4: Number((site.perReadingKg * wobble).toFixed(4)),
-          source: deviceId.includes('SAT') ? 'satellite' : 'sensor',
-          batchId,
-        });
-      }
+      rows.push({
+        deviceId,
+        ts,
+        ch4: Number((site.perReadingKg * wobble).toFixed(4)),
+        source: deviceId.includes('SAT') ? 'satellite' : 'sensor',
+        batchId,
+      });
     }
   }
 
