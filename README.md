@@ -339,11 +339,16 @@ cd apps/web && pnpm dev                 # :3001
 | `pnpm infra:reset`                       | destroy volumes and restart                              |
 
 Any `db:*` script accepts an inline connection string, which is how to point one
-at a deployed database:
+at a deployed database from here:
 
 ```bash
 DATABASE_URL="postgresql://…" pnpm db:verify
 ```
+
+These scripts run through `tsx` against the TypeScript source, so they work from
+a checkout only — the deployed image ships neither. Inside a deployment, run the
+compiled equivalents instead; see
+[DEPLOYMENT.md](./DEPLOYMENT.md#the-pnpm-db-scripts-do-not-work-in-the-deployment).
 
 **Troubleshooting.** If a change does not appear, check nothing else holds the
 port — `lsof -nP -iTCP:3001 -sTCP:LISTEN` — before suspecting the build. After

@@ -85,10 +85,36 @@ Once deployed, from the Railway service shell (or `railway run` locally):
 node apps/api/dist/db/seed.js
 ```
 
-Seeding is **destructive** — it truncates and rebuilds. Run it once, before the
-link goes to anyone. It exists so the demo URL is not an empty table, and so the
-site seeded at 130% of its limit makes `Limit Exceeded` visible without a
-reviewer having to ingest anything.
+Seeding is **destructive** — it truncates `sites`, `measurements` and `outbox`,
+and `ingestion_batches` goes with them by cascade. Run it once, before the link
+goes to anyone. It exists so the demo URL is not an empty table, and so the site
+seeded at 130% of its limit makes `Limit Exceeded` visible without a reviewer
+having to ingest anything.
+
+Note it runs **without** `--if-empty` here. Compose passes that flag so a restart
+does not discard ingested data; seeding a deployment is a deliberate act, so it
+rebuilds unconditionally.
+
+### The `pnpm db:*` scripts do not work in the deployment
+
+`pnpm db:seed` and `pnpm db:verify` are **local-only**, despite being listed in
+the README. They resolve to `tsx … src/db/seed.ts`, and the production image has
+neither piece: `tsx` is a devDependency that is not installed, and only
+`apps/api/dist` is copied — the TypeScript source never ships. The failure is an
+unhelpful `tsx: not found`.
+
+Run the compiled files instead. `WORKDIR` is `/app`, so these work as written:
+
+| Local             | In the deployment                  |
+| ----------------- | ---------------------------------- |
+| `pnpm db:seed`    | `node apps/api/dist/db/seed.js`    |
+| `pnpm db:verify`  | `node apps/api/dist/db/verify.js`  |
+| `pnpm db:migrate` | `node apps/api/dist/db/migrate.js` |
+
+Running them in the service shell also means `DATABASE_URL` is already present
+and reached over Railway's private network — no connection string to copy, paste,
+or leave in shell history. Prefer that over exporting `DATABASE_PUBLIC_URL`
+locally.
 
 ---
 
