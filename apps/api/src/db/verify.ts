@@ -167,6 +167,47 @@ async function main(): Promise<void> {
       console.log(`\n  ${drifted} site(s) FAILED reconciliation\n`);
       process.exitCode = 1;
     }
+
+    /**
+     * Readings that fell outside every explicit monthly partition.
+     *
+     * Not a reconciliation failure — the totals are correct and nothing is lost,
+     * which is exactly what makes it easy to miss. It is reported here because it
+     * is the only visible symptom of partition maintenance having stopped, and
+     * because it gets harder to fix the longer it goes unnoticed: a month with
+     * rows in DEFAULT can no longer have its partition created, so recovery means
+     * moving rows rather than running one DDL statement.
+     */
+    const { rows: fallback } = await pool.query<{ n: string }>(`
+      SELECT CASE
+               WHEN to_regclass('public.measurements_default') IS NULL THEN '0'
+               ELSE (SELECT count(*)::text FROM measurements_default)
+             END AS n
+    `);
+
+    const inDefault = Number(fallback[0]?.n ?? 0);
+
+    if (inDefault > 0) {
+      const { rows: months } = await pool.query<{ month: string; n: string }>(`
+        SELECT to_char(date_trunc('month', reading_ts), 'YYYY-MM') AS month,
+               count(*)::text AS n
+        FROM measurements_default
+        GROUP BY 1 ORDER BY 1
+      `);
+
+      console.log(
+        `  ${inDefault} reading(s) are in the DEFAULT partition, so partition coverage has lapsed:`,
+      );
+      for (const m of months) {
+        console.log(`      ${m.month}  ${m.n} reading(s)`);
+      }
+      console.log(
+        `  Those months can no longer be partitioned while the rows sit there —\n` +
+          `  move them out, then create the partitions. Check that the partition\n` +
+          `  maintenance job is running.\n`,
+      );
+      process.exitCode = 1;
+    }
   } finally {
     await pool.end();
   }
