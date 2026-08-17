@@ -1,6 +1,6 @@
 import { Inject, Logger } from '@nestjs/common';
 import { CommandHandler, type ICommandHandler } from '@nestjs/cqrs';
-import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   ComplianceStatus,
   ErrorCode,
@@ -401,12 +401,19 @@ export class IngestMeasurementsHandler implements ICommandHandler<
   }
 
   /**
-   * Readings that carry a `readingId` and match a stored reading, on
-   * (site, device, instant), which has none.
+   * Readings whose identity scheme disagrees with what is already stored at
+   * their (site, device, instant) — identified arriving where an unidentified
+   * reading sits, or the reverse.
    *
-   * The one case the partial indexes cannot adjudicate: each row satisfies a
-   * different index, so both may exist and the same physical measurement would
+   * The one collision the partial indexes cannot adjudicate: each row satisfies
+   * a different index, so both may exist and the same physical measurement would
    * be counted twice.
+   *
+   * Runs on every batch, including those carrying no `readingId` at all. An
+   * earlier version skipped the query in that case, which is the common one for
+   * v1 sensors — but skipping it is what left the reverse direction unchecked,
+   * so the cost of one bounded lookup per ingest is the price of the rule
+   * holding regardless of arrival order.
    */
   private async findIdentitySchemeConflicts(
     tx: Parameters<Parameters<Database['transaction']>[0]>[0],
@@ -417,6 +424,27 @@ export class IngestMeasurementsHandler implements ICommandHandler<
      * ones lacking an id. The scheme mismatch is symmetric, so the query has to
      * see both sides of it.
      */
+    /**
+     * The `reading_ts IN (…)` is redundant against the OR below it — every
+     * branch already pins a timestamp — but it is what makes the query indexable.
+     *
+     * An OR of (device, instant) pairs leaves the planner unable to push
+     * `reading_ts` into the index condition, so it probes on `site_id` alone and
+     * filters the rest. That reads every reading the site recorded in the
+     * partition, which is fine at demo scale and ruinous at the 100M rows this
+     * schema is partitioned for. Stating the timestamps separately lets
+     * `(site_id, reading_ts)` serve both columns, and the OR then does the exact
+     * pairing.
+     */
+    const instants = [
+      ...new Map(
+        input.readings.map((r) => {
+          const ts = new Date(r.readingTs);
+          return [ts.getTime(), ts] as const;
+        }),
+      ).values(),
+    ];
+
     const stored = await tx
       .select({
         deviceId: measurements.deviceId,
@@ -428,6 +456,7 @@ export class IngestMeasurementsHandler implements ICommandHandler<
       .where(
         and(
           eq(measurements.siteId, input.siteId),
+          inArray(measurements.readingTs, instants),
           or(
             ...input.readings.map((r) =>
               and(

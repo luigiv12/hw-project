@@ -307,6 +307,27 @@ which reading happened to arrive first, and let the same pair through whenever
 they shared a request — a guarantee that could be bypassed by batching is not a
 guarantee, and the inconsistency was the bug rather than the strictness.
 
+**What it costs.** One `SELECT` per ingest, before the insert. The earlier
+version skipped it entirely for batches carrying no `readingId` — the common
+case, since no v1 sensor sends one — but that shortcut is precisely what left the
+third row unchecked: catching an unidentified reading arriving over a stored
+identified one means looking even when the batch supplies no ids.
+
+Making it indexable took one non-obvious step. The natural predicate is an `OR`
+of `(device, instant)` pairs, and Postgres cannot lift `reading_ts` out of that
+into an index condition — it probes on `site_id` alone and filters the rest,
+reading every measurement the site recorded in that partition. Harmless on demo
+data, ruinous at the 100M rows this schema is partitioned for. Restating the
+instants as a separate `reading_ts IN (…)` — logically redundant, since every
+`OR` branch already pins one — lets `(site_id, reading_ts)` serve both columns:
+
+```
+Index Cond: (site_id = … AND reading_ts = …)     with the IN
+Index Cond: (site_id = …)                        without it
+```
+
+Both plans return the same rows; only one stays bounded as the table grows.
+
 ---
 
 ## 3. Concurrency (bonus #1)
