@@ -270,7 +270,7 @@ describe('idempotency', () => {
       await h.expectReconciled(site.id, '30', 2);
     });
 
-    it('does not double count when a device starts supplying readingId', async () => {
+    it('refuses a reading whose identity scheme disagrees with the stored one', async () => {
       const site = await h.createSite();
       const at = '2026-08-09T04:00:00.000Z';
 
@@ -284,7 +284,7 @@ describe('idempotency', () => {
        * reading re-identified or a genuinely new one, so it is held back and
        * reported rather than guessed at.
        */
-      const before = await h.duplicateCount('re_identified');
+      const before = await h.duplicateCount('mixed_identity');
 
       const replay = await h.ingest(site.id, [
         reading({
@@ -297,6 +297,7 @@ describe('idempotency', () => {
 
       expect(result(replay.body).readingsAccepted).toBe(0);
       expect(result(replay.body).conflicts).toHaveLength(1);
+      expect(result(replay.body).conflicts[0].reason).toBe('mixed_identity');
       await h.expectReconciled(site.id, '50', 1);
 
       /**
@@ -306,7 +307,62 @@ describe('idempotency', () => {
        * and the masses here are identical, so `value_conflict` would describe it
        * inaccurately as well as imprecisely.
        */
-      expect(await h.duplicateCount('re_identified')).toBe(before + 1);
+      expect(await h.duplicateCount('mixed_identity')).toBe(before + 1);
+    });
+
+    it('refuses it in the other direction too, identified stored first', async () => {
+      const site = await h.createSite();
+      const at = '2026-08-09T05:30:00.000Z';
+
+      await h.ingest(site.id, [
+        reading({
+          readingId: 'down-1',
+          deviceId: 'DOWNGRADE',
+          readingTs: at,
+          ch4Kg: '50.0000',
+        }),
+      ]);
+
+      /**
+       * The mirror of the case above. Whether the identified or the anonymous
+       * reading arrives first is an accident of ordering, not a fact about the
+       * data, so it must not decide the outcome.
+       */
+      const second = await h.ingest(site.id, [
+        reading({ deviceId: 'DOWNGRADE', readingTs: at, ch4Kg: '50.0000' }),
+      ]);
+
+      expect(result(second.body).readingsAccepted).toBe(0);
+      expect(result(second.body).conflicts[0].reason).toBe('mixed_identity');
+      await h.expectReconciled(site.id, '50', 1);
+    });
+
+    it('refuses a batch that mixes the two schemes at one instant', async () => {
+      const site = await h.createSite();
+      const at = '2026-08-09T06:45:00.000Z';
+
+      /**
+       * Same ambiguity as the two tests above, arriving in one request instead
+       * of two. Rejected at validation rather than reported as a conflict,
+       * because nothing has been stored yet — there is no partial success to
+       * describe, only a batch that contradicts itself.
+       */
+      const res = await h.ingest(site.id, [
+        reading({
+          readingId: '200',
+          deviceId: 'MIXED',
+          readingTs: at,
+          ch4Kg: '20.0000',
+        }),
+        reading({ deviceId: 'MIXED', readingTs: at, ch4Kg: '1.0000' }),
+      ]);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      expect(res.body.error.details[0].message).toMatch(
+        /identified and an unidentified reading/i,
+      );
+      await h.expectReconciled(site.id, '0', 0);
     });
   });
 

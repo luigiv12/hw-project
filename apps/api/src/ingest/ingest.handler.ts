@@ -1,6 +1,6 @@
 import { Inject, Logger } from '@nestjs/common';
 import { CommandHandler, type ICommandHandler } from '@nestjs/cqrs';
-import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
   ComplianceStatus,
   ErrorCode,
@@ -132,33 +132,33 @@ export class IngestMeasurementsHandler implements ICommandHandler<
       }
 
       /**
-       * Step 3a — readings arriving with an identity they did not have before.
+       * Step 3a — readings whose identity scheme disagrees with what is stored.
        *
-       * A reading carrying `readingId` that matches a stored reading on
-       * (site, device, instant) which has none. The two partial indexes cover
-       * disjoint sets of rows, so neither adjudicates this pair — it is the one
-       * collision storage cannot decide. A device upgraded to supply `readingId`
-       * and replaying its buffer produces exactly this.
+       * A `(device, instant)` may hold identified readings or one unidentified
+       * reading, never both. The two partial unique indexes cover disjoint sets
+       * of rows, so neither adjudicates such a pair and the database would store
+       * both — the same measurement counted twice.
        *
-       * Only the producer knows whether it re-identified a reading it had
-       * already sent or took a second one at that instant, so these are withheld
-       * from the insert and returned in `conflicts`. Withholding is the safer
-       * direction: a reading held back can be re-sent once its identity is
-       * unambiguous, where a duplicated regulatory total has nothing downstream
-       * to contradict it.
+       * Checked in both directions, because which reading arrives first is an
+       * accident of ordering rather than a fact about the data. A device
+       * upgraded to emit `readingId` and replaying its buffer produces one
+       * direction; a device that stops emitting them, or a mixed fleet sharing a
+       * device name, produces the other.
+       *
+       * Withheld rather than guessed at: a reading held back is reported and can
+       * be re-sent unambiguously, where a duplicated regulatory total has nothing
+       * downstream to contradict it.
        */
-      const reIdentified = await this.findReIdentifiedReadings(tx, input);
-      const reIdentifiedKeys = new Set(
-        reIdentified.map(
+      const mixedIdentity = await this.findIdentitySchemeConflicts(tx, input);
+      const withheld = new Set(
+        mixedIdentity.map(
           (c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`,
         ),
       );
 
       const toInsert = input.readings.filter(
         (r) =>
-          !reIdentifiedKeys.has(
-            `${r.deviceId}|${new Date(r.readingTs).getTime()}`,
-          ),
+          !withheld.has(`${r.deviceId}|${new Date(r.readingTs).getTime()}`),
       );
 
       /**
@@ -207,9 +207,9 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         new Set(inserted.map((r) => identityOf(r))),
       );
 
-      // Merged for the response — the caller resolves both the same way — but
-      // kept apart above so each is counted and logged under its own reason.
-      const conflicts = [...reIdentified, ...valueConflicts];
+      // Merged for the response; each entry carries its own `reason`, so a
+      // consumer can tell which fix applies without parsing the message.
+      const conflicts = [...mixedIdentity, ...valueConflicts];
 
       /**
        * Step 4 — the delta, computed by Postgres from the rows that landed.
@@ -365,14 +365,14 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         );
       }
 
-      if (reIdentified.length > 0) {
-        this.metrics.recordDuplicate('re_identified', reIdentified.length);
+      if (mixedIdentity.length > 0) {
+        this.metrics.recordDuplicate('mixed_identity', mixedIdentity.length);
         this.logger.warn(
-          `batch ${claimed.id}: ${reIdentified.length} reading(s) arrived with a readingId ` +
-            `matching a stored reading that has none, and were NOT stored. ` +
-            `If this is the same reading re-identified, it is already counted; ` +
-            `if it is a new one, re-send it at a distinct timestamp. ` +
-            reIdentified
+          `batch ${claimed.id}: ${mixedIdentity.length} reading(s) disagreed with the ` +
+            `identity scheme already stored at their device and instant, and were NOT stored. ` +
+            `One instant holds identified readings or one unidentified reading, never both. ` +
+            `Identify both if they are separate measurements, or neither if they are the same one. ` +
+            mixedIdentity
               .map(
                 (c) =>
                   `${c.deviceId}@${c.readingTs} submitted=${c.submittedCh4Kg} stored=${c.storedCh4Kg}`,
@@ -401,33 +401,59 @@ export class IngestMeasurementsHandler implements ICommandHandler<
   }
 
   /**
-   * Readings that carry a `readingId` and match a stored reading, on
-   * (site, device, instant), which has none.
+   * Readings whose identity scheme disagrees with what is already stored at
+   * their (site, device, instant) — identified arriving where an unidentified
+   * reading sits, or the reverse.
    *
-   * The one case the partial indexes cannot adjudicate: each row satisfies a
-   * different index, so both may exist and the same physical measurement would
+   * The one collision the partial indexes cannot adjudicate: each row satisfies
+   * a different index, so both may exist and the same physical measurement would
    * be counted twice.
+   *
+   * Runs on every batch, including those carrying no `readingId` at all — which
+   * is the common case, since no v1 sensor sends one. Skipping the query there
+   * would be cheaper but would leave the reverse direction unchecked: a stored
+   * identified reading is only visible to a batch that looks for it.
    */
-  private async findReIdentifiedReadings(
+  private async findIdentitySchemeConflicts(
     tx: Parameters<Parameters<Database['transaction']>[0]>[0],
     input: IngestMeasurementsCommand['input'],
   ): Promise<IngestResult['conflicts']> {
-    const identified = input.readings.filter((r) => r.readingId);
-    if (identified.length === 0) return [];
+    /**
+     * The instants this batch touches, deduplicated.
+     *
+     * Used below as a `reading_ts IN (…)` that is logically redundant — every
+     * branch of the OR already pins a timestamp — but is what makes the query
+     * indexable. An OR of (device, instant) pairs gives the planner nothing to
+     * push into the index condition beyond `site_id`, so it probes on that alone
+     * and filters the rest, reading every measurement the site recorded in the
+     * partition. Harmless at demo scale, ruinous at the 100M rows this schema is
+     * partitioned for. Stating the instants separately lets
+     * `(site_id, reading_ts)` serve both columns; the OR then does the exact
+     * pairing.
+     */
+    const instants = [
+      ...new Map(
+        input.readings.map((r) => {
+          const ts = new Date(r.readingTs);
+          return [ts.getTime(), ts] as const;
+        }),
+      ).values(),
+    ];
 
     const stored = await tx
       .select({
         deviceId: measurements.deviceId,
         readingTs: measurements.readingTs,
+        readingId: measurements.readingId,
         ch4Kg: measurements.ch4Kg,
       })
       .from(measurements)
       .where(
         and(
           eq(measurements.siteId, input.siteId),
-          isNull(measurements.readingId),
+          inArray(measurements.readingTs, instants),
           or(
-            ...identified.map((r) =>
+            ...input.readings.map((r) =>
               and(
                 eq(measurements.deviceId, r.deviceId),
                 eq(measurements.readingTs, new Date(r.readingTs)),
@@ -437,19 +463,43 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         ),
       );
 
-    return stored.map((s) => {
-      const submitted = identified.find(
-        (r) =>
-          r.deviceId === s.deviceId &&
-          new Date(r.readingTs).getTime() === s.readingTs.getTime(),
-      );
+    if (stored.length === 0) return [];
 
-      return {
-        deviceId: s.deviceId,
-        readingTs: s.readingTs.toISOString(),
-        submittedCh4Kg: submitted?.ch4Kg ?? '0',
-        storedCh4Kg: s.ch4Kg,
-      };
+    const instantOf = (deviceId: string, ts: Date | string) =>
+      `${deviceId}|${new Date(ts).getTime()}`;
+
+    // An instant is "identified" if anything stored there carries an id.
+    const storedScheme = new Map<
+      string,
+      { identified: boolean; ch4Kg: string }
+    >();
+    for (const s of stored) {
+      const key = instantOf(s.deviceId, s.readingTs);
+      const seen = storedScheme.get(key);
+      if (!seen || (!seen.identified && s.readingId !== null)) {
+        storedScheme.set(key, {
+          identified: s.readingId !== null,
+          ch4Kg: s.ch4Kg,
+        });
+      }
+    }
+
+    return input.readings.flatMap((r) => {
+      const existing = storedScheme.get(instantOf(r.deviceId, r.readingTs));
+      if (!existing) return [];
+
+      // Same scheme is ordinary de-duplication, handled by the unique indexes.
+      if (existing.identified === Boolean(r.readingId)) return [];
+
+      return [
+        {
+          reason: 'mixed_identity' as const,
+          deviceId: r.deviceId,
+          readingTs: new Date(r.readingTs).toISOString(),
+          submittedCh4Kg: r.ch4Kg,
+          storedCh4Kg: existing.ch4Kg,
+        },
+      ];
     });
   }
 
@@ -529,6 +579,7 @@ export class IngestMeasurementsHandler implements ICommandHandler<
       // not be reported as a conflict.
       if (compareDecimalStrings(storedKg, r.ch4Kg) !== 0) {
         conflicts.push({
+          reason: 'value_conflict',
           deviceId: r.deviceId,
           readingTs: new Date(r.readingTs).toISOString(),
           submittedCh4Kg: r.ch4Kg,

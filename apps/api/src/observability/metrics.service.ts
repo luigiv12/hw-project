@@ -104,7 +104,7 @@ export class MetricsService {
       | 'key_reused'
       | 'duplicate_reading'
       | 'value_conflict'
-      | 're_identified',
+      | 'mixed_identity',
     count = 1,
   ): void {
     this.duplicates.inc({ reason }, count);
