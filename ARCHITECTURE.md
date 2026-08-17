@@ -302,15 +302,16 @@ the data and must not depend on packaging:
 | unidentified stored, identified arrives | withheld, `conflicts[]`                                                                 |
 | identified stored, unidentified arrives | withheld, `conflicts[]`                                                                 |
 
-An earlier version checked only the middle row. That made the outcome depend on
-which reading happened to arrive first, and let the same pair through whenever
-they shared a request — a guarantee that could be bypassed by batching is not a
-guarantee, and the inconsistency was the bug rather than the strictness.
+Covering only the middle row would be cheaper and is the tempting simplification,
+since it is the direction a fleet upgrade actually produces. It would also make
+the outcome depend on which reading happened to arrive first, and let the pair
+through whenever they shared a request. A guarantee that can be bypassed by
+batching is not a guarantee.
 
-**What it costs.** One `SELECT` per ingest, before the insert. The earlier
-version skipped it entirely for batches carrying no `readingId` — the common
-case, since no v1 sensor sends one — but that shortcut is precisely what left the
-third row unchecked: catching an unidentified reading arriving over a stored
+**What it costs.** One `SELECT` per ingest, before the insert, including for
+batches carrying no `readingId` at all — the common case, since no v1 sensor
+sends one. Skipping it there is the obvious optimisation and the reason the third
+row is easy to miss: catching an unidentified reading arriving over a stored
 identified one means looking even when the batch supplies no ids.
 
 Making it indexable took one non-obvious step. The natural predicate is an `OR`

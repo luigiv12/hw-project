@@ -139,11 +139,11 @@ export class IngestMeasurementsHandler implements ICommandHandler<
        * of rows, so neither adjudicates such a pair and the database would store
        * both — the same measurement counted twice.
        *
-       * Checked in both directions. A device upgraded to emit `readingId` and
-       * replaying its buffer produces the first; one that stops emitting them,
-       * or a mixed fleet sharing a device name, produces the second. The
-       * asymmetric version of this check caught only the first, which made the
-       * outcome depend on arrival order rather than on the data.
+       * Checked in both directions, because which reading arrives first is an
+       * accident of ordering rather than a fact about the data. A device
+       * upgraded to emit `readingId` and replaying its buffer produces one
+       * direction; a device that stops emitting them, or a mixed fleet sharing a
+       * device name, produces the other.
        *
        * Withheld rather than guessed at: a reading held back is reported and can
        * be re-sent unambiguously, where a duplicated regulatory total has nothing
@@ -409,31 +409,26 @@ export class IngestMeasurementsHandler implements ICommandHandler<
    * a different index, so both may exist and the same physical measurement would
    * be counted twice.
    *
-   * Runs on every batch, including those carrying no `readingId` at all. An
-   * earlier version skipped the query in that case, which is the common one for
-   * v1 sensors — but skipping it is what left the reverse direction unchecked,
-   * so the cost of one bounded lookup per ingest is the price of the rule
-   * holding regardless of arrival order.
+   * Runs on every batch, including those carrying no `readingId` at all — which
+   * is the common case, since no v1 sensor sends one. Skipping the query there
+   * would be cheaper but would leave the reverse direction unchecked: a stored
+   * identified reading is only visible to a batch that looks for it.
    */
   private async findIdentitySchemeConflicts(
     tx: Parameters<Parameters<Database['transaction']>[0]>[0],
     input: IngestMeasurementsCommand['input'],
   ): Promise<IngestResult['conflicts']> {
     /**
-     * Every stored reading at any instant this batch touches — not just the
-     * ones lacking an id. The scheme mismatch is symmetric, so the query has to
-     * see both sides of it.
-     */
-    /**
-     * The `reading_ts IN (…)` is redundant against the OR below it — every
-     * branch already pins a timestamp — but it is what makes the query indexable.
+     * The instants this batch touches, deduplicated.
      *
-     * An OR of (device, instant) pairs leaves the planner unable to push
-     * `reading_ts` into the index condition, so it probes on `site_id` alone and
-     * filters the rest. That reads every reading the site recorded in the
-     * partition, which is fine at demo scale and ruinous at the 100M rows this
-     * schema is partitioned for. Stating the timestamps separately lets
-     * `(site_id, reading_ts)` serve both columns, and the OR then does the exact
+     * Used below as a `reading_ts IN (…)` that is logically redundant — every
+     * branch of the OR already pins a timestamp — but is what makes the query
+     * indexable. An OR of (device, instant) pairs gives the planner nothing to
+     * push into the index condition beyond `site_id`, so it probes on that alone
+     * and filters the rest, reading every measurement the site recorded in the
+     * partition. Harmless at demo scale, ruinous at the 100M rows this schema is
+     * partitioned for. Stating the instants separately lets
+     * `(site_id, reading_ts)` serve both columns; the OR then does the exact
      * pairing.
      */
     const instants = [
