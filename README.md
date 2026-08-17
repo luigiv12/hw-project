@@ -67,9 +67,21 @@ seeding error.
 
 ## Prove it
 
-Copy-paste against the live API or a local stack — set `API` and everything
-below is identical. Run the blocks in order: steps 2, 3 and 5 all reuse `$KEY`
-from step 1, and only mean anything once it has been spent.
+Paste this into **any terminal on your own machine** — nothing to clone and
+nothing to install beyond `curl` and `python3`. Steps 1–6 talk to the live API
+over HTTP; only step 7 needs the repo.
+
+Two things to know before you start:
+
+- **Use one terminal window for all of it.** The setup block defines `$SITE`,
+  `$KEY`, `$BATCH` and a `total` helper that the later blocks rely on, and those
+  live only in that shell session.
+- **Run the blocks in order.** Steps 2, 3 and 5 reuse `$KEY` from step 1 and only
+  mean anything once it has been spent — a retry is a replay only if there was
+  something to replay.
+
+Set `API` and everything below is identical against the deployment or a local
+stack.
 
 ```bash
 # live
@@ -156,7 +168,10 @@ differing payload is a client bug and is surfaced rather than silently accepted.
 curl -s $API/metrics | grep emissions_ingest_duplicate_total
 ```
 
-**7. Reconcile**
+**7. Reconcile** — the one step that needs the repo
+
+Unlike the others this talks to Postgres directly rather than over HTTP, so run
+it from the repo root after `docker compose up`:
 
 ```bash
 pnpm db:verify
@@ -166,9 +181,8 @@ Recomputes every site's total from the raw measurements and compares it against
 the stored summary. Exits non-zero on any drift, and says which direction — above
 means double-counting, below means a lost update.
 
-This one needs a database connection rather than the HTTP API, so it runs against
-a local stack by default. Point it at a deployment with an inline connection
-string:
+It uses the local stack by default. Point it at a deployment with an inline
+connection string:
 
 ```bash
 DATABASE_URL="postgresql://…" pnpm db:verify
