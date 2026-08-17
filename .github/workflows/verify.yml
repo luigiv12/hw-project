@@ -1,0 +1,73 @@
+name: verify
+
+# The claim in ARCHITECTURE.md §11 is that nothing is asserted without a test
+# behind it. This runs those tests on every push, so a reader can see the claim
+# holding rather than take it on trust.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A newer push makes an in-flight run for the same ref irrelevant.
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      # The integration tests use no mocks: ON CONFLICT semantics,
+      # SELECT FOR UPDATE, exact numeric arithmetic and partition routing are all
+      # database behaviour, so CI needs a real Postgres rather than a stand-in.
+      # Matches the compose file and the deployment.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: emissions
+          POSTGRES_USER: emissions
+          POSTGRES_PASSWORD: emissions
+        ports:
+          - 5432:5432
+        # Without this the first migration can race Postgres finishing startup.
+        options: >-
+          --health-cmd "pg_isready -U emissions -d emissions"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql://emissions:emissions@localhost:5432/emissions
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          # Both read from the repo rather than being pinned again here, so the
+          # toolchain cannot drift between a laptop and CI.
+          node-version-file: .node-version
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # `@emissions/contracts` resolves through `dist`, so the API and dashboard
+      # cannot typecheck against source. Nothing else needs building: `verify`
+      # runs ts-jest and `tsc --noEmit`, and the Next.js production build is
+      # exercised by the deployment rather than here.
+      - run: pnpm --filter @emissions/contracts build
+
+      # Applies every migration including the hand-written partitioned ones, so
+      # CI exercises the same DDL a deployment runs.
+      - run: pnpm db:migrate
+
+      - run: pnpm verify
+
+      # Reconciles the denormalised site summaries against the raw measurements.
+      # The suite already asserts this per test; running it once more over
+      # whatever the full run left behind catches a drift that only appears
+      # across tests.
+      - run: pnpm db:verify
