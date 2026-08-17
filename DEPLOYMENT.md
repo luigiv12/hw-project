@@ -52,7 +52,6 @@ DATABASE_URL      ${{Postgres.DATABASE_URL}}     # Railway reference, not a lite
 NODE_ENV          production
 PORT              3000
 CORS_ORIGINS      https://<your-app>.vercel.app  # exact origin, no trailing slash
-LOG_LEVEL         info
 OUTBOX_POLL_MS    1000
 TRUST_PROXY_HOPS  1
 ```

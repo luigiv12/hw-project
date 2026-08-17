@@ -12,8 +12,6 @@ export const ErrorCode = {
   NOT_FOUND: 'NOT_FOUND',
   /** No site exists with the given id. */
   SITE_NOT_FOUND: 'SITE_NOT_FOUND',
-  /** Batch exceeded the per-request reading limit. */
-  BATCH_TOO_LARGE: 'BATCH_TOO_LARGE',
   /**
    * The same Idempotency-Key arrived with a *different* payload. This is a
    * client bug — silently accepting it would let a retry overwrite a distinct
@@ -40,7 +38,6 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   [ErrorCode.VALIDATION_ERROR]: 400,
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.SITE_NOT_FOUND]: 404,
-  [ErrorCode.BATCH_TOO_LARGE]: 400,
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 409,
   [ErrorCode.BATCH_IN_PROGRESS]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,

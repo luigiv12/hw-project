@@ -62,10 +62,6 @@ export const envSchema = z.object({
    * and version detail worth not publishing.
    */
   METRICS_TOKEN: z.string().min(1).optional(),
-
-  LOG_LEVEL: z
-    .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
-    .default('info'),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -87,10 +87,8 @@ services:
       # host-facing localhost:5432 mapping is irrelevant here — a common source
       # of confusion when moving an app into compose.
       DATABASE_URL: postgresql://${POSTGRES_USER:-emissions}:${POSTGRES_PASSWORD:-emissions}@postgres:5432/${POSTGRES_DB:-emissions}
-      REDIS_URL: redis://redis:6379
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001}
       OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

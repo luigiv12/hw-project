@@ -67,8 +67,21 @@ seeding error.
 
 ## Prove it
 
-Copy-paste against the live API or a local stack — set `API` and everything
-below is identical. Each block after this one is independent.
+Paste this into **any terminal on your own machine** — nothing to clone and
+nothing to install beyond `curl` and `python3`. Steps 1–6 talk to the live API
+over HTTP; only step 7 needs the repo.
+
+Two things to know before you start:
+
+- **Use one terminal window for all of it.** The setup block defines `$SITE`,
+  `$KEY`, `$BATCH` and a `total` helper that the later blocks rely on, and those
+  live only in that shell session.
+- **Run the blocks in order.** Steps 2, 3 and 5 reuse `$KEY` from step 1 and only
+  mean anything once it has been spent — a retry is a replay only if there was
+  something to replay.
+
+Set `API` and everything below is identical against the deployment or a local
+stack.
 
 ```bash
 # live
@@ -155,7 +168,10 @@ differing payload is a client bug and is surfaced rather than silently accepted.
 curl -s $API/metrics | grep emissions_ingest_duplicate_total
 ```
 
-**7. Reconcile**
+**7. Reconcile** — the one step that needs the repo
+
+Unlike the others this talks to Postgres directly rather than over HTTP, so run
+it from the repo root after `docker compose up`:
 
 ```bash
 pnpm db:verify
@@ -165,9 +181,8 @@ Recomputes every site's total from the raw measurements and compares it against
 the stored summary. Exits non-zero on any drift, and says which direction — above
 means double-counting, below means a lost update.
 
-This one needs a database connection rather than the HTTP API, so it runs against
-a local stack by default. Point it at a deployment with an inline connection
-string:
+It uses the local stack by default. Point it at a deployment with an inline
+connection string:
 
 ```bash
 DATABASE_URL="postgresql://…" pnpm db:verify
@@ -257,16 +272,16 @@ looks like nothing was ever created.
 
 All eight are implemented.
 
-| #   | Task                 | What was built                                                                                                                                        | Where                                                                                                        |
-| --- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                               | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                                          |
-| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                      | `ingest.command.ts`, `ingest.handler.ts`                                                                     |
-| 3   | DB scalability       | Monthly `RANGE` partitioning, kept provisioned three months ahead by a scheduled job, plus a `DEFAULT` partition so a bad clock cannot fail an insert | `drizzle/0000_init.sql`, `partition-maintenance.service.ts` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3) |
-| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                          | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)                                       |
-| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                           | `docker-compose.yml`                                                                                         |
-| 6   | Observability        | Pino structured logs carrying the request id; `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it     | `src/observability/`                                                                                         |
-| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides                | `packages/contracts/`                                                                                        |
-| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter                  | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8)                          |
+| #   | Task                 | What was built                                                                                                                                                               | Where                                                                                                        |
+| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                                                      | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                                          |
+| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                                             | `ingest.command.ts`, `ingest.handler.ts`                                                                     |
+| 3   | DB scalability       | Monthly `RANGE` partitioning, kept provisioned three months ahead by a scheduled job, plus a `DEFAULT` partition so a bad clock cannot fail an insert                        | `drizzle/0000_init.sql`, `partition-maintenance.service.ts` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3) |
+| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                                                 | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)                                       |
+| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                                                  | `docker-compose.yml`                                                                                         |
+| 6   | Observability        | `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it; every response carries a request id, and failures are logged against it | `src/observability/`, `src/common/all-exceptions.filter.ts`                                                  |
+| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides                                       | `packages/contracts/`                                                                                        |
+| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter                                         | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8)                          |
 
 Two are visible without reading any code:
 
@@ -316,7 +331,9 @@ Cursors are keyset rather than offsets, so pages stay correct while rows are
 being written. Hand back `nextCursor` verbatim; `null` means the last page. The
 full convention is in [ARCHITECTURE.md](./ARCHITECTURE.md#7-platform-conventions).
 
-Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
+Send `X-Request-Id` and it comes back in `meta.requestId` and as a response
+header. Any failure is logged against that id, so an error a client reports can be
+joined to its server-side log line.
 
 Every example below is a real request and its real response, captured against
 this build. The site id in the request bodies is the one from that capture —
@@ -602,7 +619,6 @@ be reworded without it counting as a breaking change.
 | Code                     | Status | Meaning                                            |
 | ------------------------ | ------ | -------------------------------------------------- |
 | `VALIDATION_ERROR`       | 400    | Body or params failed schema validation            |
-| `BATCH_TOO_LARGE`        | 400    | More than 100 readings                             |
 | `UNAUTHORIZED`           | 401    | Missing or wrong credentials on a guarded endpoint |
 | `NOT_FOUND`              | 404    | No route matches                                   |
 | `SITE_NOT_FOUND`         | 404    | No site with that id                               |
@@ -714,7 +730,7 @@ apps/api/
   src/outbox/          transactional outbox dispatcher
   src/observability/   Prometheus metrics
   src/common/          envelope, exception filter, request id, canonical hash
-  src/db/              Drizzle schema, migrate, seed, verify
+  src/db/              Drizzle schema, migrate, seed, verify, partition upkeep
   drizzle/             hand-written SQL migrations (partitioned DDL)
   test/                integration suites
 
