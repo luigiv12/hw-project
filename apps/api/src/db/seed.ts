@@ -95,9 +95,21 @@ const SEED_SITES: SeedSite[] = [
   },
 ];
 
-/** Readings per device per month, spread across the seeded months. */
-const READINGS_PER_DEVICE_PER_MONTH = 60;
-const MONTHS_OF_HISTORY = 3;
+/**
+ * Readings per device, at 12-hour spacing — so ~90 days of history, landing
+ * across three or four monthly partitions.
+ */
+const READINGS_PER_DEVICE = 180;
+
+/**
+ * Readings per seeded batch.
+ *
+ * Bounded by `MAX_BATCH_SIZE`, because seeded rows are meant to be shaped like
+ * ingested ones: a reviewer replaying a seeded idempotency key should exercise
+ * the same path a real client would, and a batch the API would have rejected
+ * cannot do that.
+ */
+const READINGS_PER_BATCH = 60;
 
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
@@ -276,12 +288,14 @@ function buildReadings(site: SeedSite) {
    * on when someone happens to run it, and it puts `expectBreach` on a collision
    * course with the calendar.
    */
-  const READINGS_PER_DEVICE = READINGS_PER_DEVICE_PER_MONTH * MONTHS_OF_HISTORY;
-
   for (const deviceId of site.devices) {
-    const batchId = crypto.randomUUID();
+    let batchId = crypto.randomUUID();
 
     for (let i = 0; i < READINGS_PER_DEVICE; i++) {
+      // A new batch every READINGS_PER_BATCH readings, so no seeded batch is
+      // larger than the API would accept from a real producer.
+      if (i > 0 && i % READINGS_PER_BATCH === 0) batchId = crypto.randomUUID();
+
       // Every 12 hours going back, so the series spans ~90 days and lands across
       // three or four monthly partitions.
       const ts = new Date(now.getTime() - i * 12 * 60 * 60 * 1000);
