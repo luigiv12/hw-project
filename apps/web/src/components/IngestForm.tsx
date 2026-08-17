@@ -209,6 +209,25 @@ export function IngestForm({
       setAttemptKey(null);
       setOutcome({ kind: 'ok', result, replayed });
       onIngested();
+
+      /**
+       * Move the timestamps forward once the batch has landed.
+       *
+       * Readings de-duplicate on (device, instant), so leaving them where they
+       * were makes every following submission collide with the one just stored —
+       * and pressing Submit again would look like the form was broken rather
+       * than like de-duplication working. A device takes its next reading at a
+       * new instant; the form should behave the same way.
+       *
+       * Only on success. A failed attempt has to keep its payload byte-identical
+       * so Retry can reuse the idempotency key, which is the whole demonstration.
+       */
+      setReadings((rs) =>
+        rs.map((r, i) => ({
+          ...r,
+          readingTs: preciseMode ? toIso(localNow(0)) : localNow(-i),
+        })),
+      );
     } catch (err: unknown) {
       if (err instanceof ApiRequestError) {
         setOutcome({
@@ -302,13 +321,30 @@ export function IngestForm({
             <strong>
               {outcome.result.conflicts.length} reading(s) were NOT stored
             </strong>
-            Each collided with a stored reading carrying a different mass, so it
-            could not be a retry — two distinct measurements are competing for
-            one identity. Send a <code>readingId</code> so the device decides
-            what counts as the same reading.
+            {outcome.result.conflicts.some(
+              (c) => c.reason === 'mixed_identity',
+            ) && (
+              <p style={{ margin: '0.35rem 0' }}>
+                A reading already exists at that device and instant using the
+                other identity scheme. One instant holds either identified
+                readings or a single unidentified one — never both. Give both a
+                distinct <code>readingId</code> if they are separate
+                measurements, or neither if they are the same one.
+              </p>
+            )}
+            {outcome.result.conflicts.some(
+              (c) => c.reason === 'value_conflict',
+            ) && (
+              <p style={{ margin: '0.35rem 0' }}>
+                A reading collided with a stored one carrying a different mass,
+                so it cannot be a retry — two distinct measurements are
+                competing for one identity. Send a <code>readingId</code> so the
+                device decides what counts as the same reading.
+              </p>
+            )}
             <ul>
               {outcome.result.conflicts.map((c) => (
-                <li key={`${c.deviceId}-${c.readingTs}`}>
+                <li key={`${c.deviceId}-${c.readingTs}-${c.reason}`}>
                   <code>
                     {c.deviceId} @ {c.readingTs}
                   </code>{' '}

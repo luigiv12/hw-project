@@ -211,7 +211,7 @@ flowchart TD
         direction TB
         LOCK["1 · SELECT site FOR UPDATE"]
         CLAIM["2 · INSERT batch, ON CONFLICT DO NOTHING"]
-        REID["3a · find re-identified readings, withhold them"]
+        REID["3a · withhold identity-scheme conflicts"]
         INS["3b · INSERT readings, ON CONFLICT DO NOTHING"]
         DELTA["4 · delta = SUM ch4_kg for this batch_id"]
         UPD["5 · UPDATE site: total = total + delta"]
@@ -268,13 +268,12 @@ so a differing mass is not a retry — two distinct measurements are competing f
 one identity and one was not stored. Counted as
 `emissions_ingest_duplicate_total{reason="value_conflict"}`.
 
-**A reading arriving with an identity it did not have before.** A reading
-carrying `readingId` that matches a stored reading on `(site, device, timestamp)`
-which has none. The two partial indexes cover disjoint sets of rows — one only
-sees rows without a reading id, the other only rows with one — so neither
-adjudicates this pair and the database would accept both. A device upgraded to
-supply `readingId`, replaying its buffer, produces exactly this shape. Counted as
-`emissions_ingest_duplicate_total{reason="re_identified"}`.
+**Two readings at one instant disagreeing about identity.** A `(site, device,
+timestamp)` may hold identified readings or one unidentified reading, never both.
+The two partial indexes cover disjoint sets of rows — one sees only rows without
+a reading id, the other only rows with one — so neither adjudicates such a pair
+and the database would accept both, storing one measurement twice. Counted as
+`emissions_ingest_duplicate_total{reason="mixed_identity"}`.
 
 Both resolve the same way, and for the same reason: only the producer knows
 whether this is one measurement or two, and withholding is the recoverable
@@ -285,15 +284,28 @@ That asymmetry is the "lost packet" half of the brief taken seriously — silent
 discarding a measurement understates a total just as surely as counting one
 twice, and is the harder of the two to ever notice.
 
-**How speculative this is, stated plainly.** The value-conflict case is ordinary
-and will happen. The re-identification case is narrow: it needs a producer that
-was already sending readings, then starts supplying `readingId`, and replays
-across the changeover. It costs a `SELECT` before the insert on every batch. It
-is implemented rather than documented-only because it is the one collision the
-schema cannot adjudicate, and the failure mode is a silent double-count of a
-regulatory figure. A reviewer who considers it over-built for the brief is not
-wrong — the cost is one query and one branch, and it would be the first thing to
-cut.
+**Why refusing is cheap here.** The check rests on a domain fact worth stating
+outright: methane telemetry samples in seconds to minutes, so two genuine
+readings from one device at the same _millisecond_ do not occur. When an
+identified and an unidentified reading collide at one instant, the overwhelmingly
+likely explanation is one measurement described twice — a device mid-upgrade
+replaying its buffer, or a mixed fleet sharing a device name. The false-positive
+cost of refusing is therefore close to nil, while accepting risks a permanent,
+silent overstatement of a regulatory figure.
+
+**Checked in all three arrival patterns**, because the ambiguity is a property of
+the data and must not depend on packaging:
+
+| Arrival                                 | Outcome                                                                                 |
+| --------------------------------------- | --------------------------------------------------------------------------------------- |
+| both readings in one request            | `400 VALIDATION_ERROR` — nothing stored yet, so there is no partial success to describe |
+| unidentified stored, identified arrives | withheld, `conflicts[]`                                                                 |
+| identified stored, unidentified arrives | withheld, `conflicts[]`                                                                 |
+
+An earlier version checked only the middle row. That made the outcome depend on
+which reading happened to arrive first, and let the same pair through whenever
+they shared a request — a guarantee that could be bypassed by batching is not a
+guarantee, and the inconsistency was the bug rather than the strictness.
 
 ---
 

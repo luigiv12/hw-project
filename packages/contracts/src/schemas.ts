@@ -213,6 +213,43 @@ export const ingestSchema = z
           'distinct readingId, or one of them will be discarded.',
       });
     });
+
+    /**
+     * One instant, one identity scheme.
+     *
+     * A `(device, instant)` carrying both an identified and an unidentified
+     * reading asserts two incompatible things about one measurement: that its
+     * identity is the supplied id, and that it has no identity of its own beyond
+     * the instant. Storage cannot represent both, and the server cannot tell
+     * which the producer meant.
+     *
+     * Rejected rather than guessed at because sub-second duplicate readings do
+     * not occur in this domain — sampling is seconds to minutes — so the far
+     * likelier reading of such a batch is one measurement described twice.
+     */
+    const identified = new Map<string, number>();
+    const anonymous = new Map<string, number>();
+
+    batch.readings.forEach((reading, index) => {
+      const instant = `${reading.deviceId}|${new Date(reading.readingTs).getTime()}`;
+      const bucket = reading.readingId ? identified : anonymous;
+      if (!bucket.has(instant)) bucket.set(instant, index);
+    });
+
+    for (const [instant, index] of identified) {
+      const other = anonymous.get(instant);
+      if (other === undefined) continue;
+
+      ctx.addIssue({
+        code: 'custom',
+        path: ['readings', Math.max(index, other)],
+        message:
+          `this batch carries both an identified and an unidentified reading for ` +
+          `the same device and instant (indexes ${Math.min(index, other)} and ` +
+          `${Math.max(index, other)}). Give both a distinct readingId if they are ` +
+          `separate measurements, or neither if they are the same one.`,
+      });
+    }
   });
 
 export type IngestInput = z.infer<typeof ingestSchema>;
@@ -248,6 +285,19 @@ export const ingestResultSchema = z.object({
   conflicts: z
     .array(
       z.object({
+        /**
+         * Why this reading was withheld. The two cases need different fixes, so
+         * a consumer must be able to tell them apart without parsing prose.
+         *
+         * `value_conflict` — two readings competing for one identity with
+         * different masses. Neither supplied a `readingId`, so there is no
+         * identity claim to honour. Fix: send `readingId`.
+         *
+         * `mixed_identity` — an identified and an unidentified reading at the
+         * same (device, instant). The producer is asserting two incompatible
+         * things about one measurement. Fix: identify both, or neither.
+         */
+        reason: z.enum(['value_conflict', 'mixed_identity']),
         deviceId: z.string(),
         readingTs: z.string(),
         submittedCh4Kg: z.string(),

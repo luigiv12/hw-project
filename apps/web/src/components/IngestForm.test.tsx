@@ -144,6 +144,7 @@ describe('IngestForm', () => {
         readingsAccepted: 0,
         conflicts: [
           {
+            reason: 'value_conflict' as const,
             deviceId: 'FIELD-PROBE-01',
             readingTs: '2026-08-09T12:00:00.000Z',
             submittedCh4Kg: '47.5000',
