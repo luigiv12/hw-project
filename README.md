@@ -322,7 +322,7 @@ Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
 
 ```bash
 pnpm verify        # everything below, in one command
-pnpm test          # 127 tests: 111 API, 16 dashboard
+pnpm test          # 131 tests: 115 API, 16 dashboard
 pnpm lint          # eslint across the workspace
 pnpm typecheck     # every package
 pnpm format:check  # prettier

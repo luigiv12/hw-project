@@ -285,6 +285,7 @@ describe('idempotency', () => {
        * reported rather than guessed at.
        */
       const before = await h.duplicateCount('mixed_identity');
+      const beforeDuplicates = await h.duplicateCount('duplicate_reading');
 
       const replay = await h.ingest(site.id, [
         reading({
@@ -308,6 +309,20 @@ describe('idempotency', () => {
        * inaccurately as well as imprecisely.
        */
       expect(await h.duplicateCount('mixed_identity')).toBe(before + 1);
+
+      /**
+       * And it is counted under that reason *only*.
+       *
+       * A withheld reading is absent from `readingsAccepted` just as a
+       * de-duplicated one is, so deriving the duplicate count from
+       * submitted-minus-accepted silently attributes it to both. The brief asks
+       * specifically how many requests were identified and rejected as
+       * duplicates, and this reading was not one — nothing was recognised as
+       * already stored, the server declined to guess which measurement was meant.
+       */
+      expect(await h.duplicateCount('duplicate_reading')).toBe(
+        beforeDuplicates,
+      );
     });
 
     it('refuses it in the other direction too, identified stored first', async () => {

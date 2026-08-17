@@ -351,7 +351,18 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         })
         .where(eq(ingestionBatches.id, claimed.id));
 
-      const skipped = input.readings.length - readingsAccepted;
+      /**
+       * Readings that were de-duplicated, and only those.
+       *
+       * Withheld conflicts are also absent from `readingsAccepted`, but they are
+       * not duplicates — they are readings the server declined to store because
+       * it could not tell which measurement was meant. They are counted under
+       * their own reasons below, so subtracting them here is what keeps
+       * `duplicate_reading` answering the question the brief actually asks:
+       * how many were identified and rejected as duplicates.
+       */
+      const skipped =
+        input.readings.length - readingsAccepted - conflicts.length;
 
       this.metrics.recordIngest(command.apiVersion, 'accepted');
       this.metrics.recordMeasurementsInserted(readingsAccepted);

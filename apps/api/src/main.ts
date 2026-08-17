@@ -47,14 +47,18 @@ async function bootstrap(): Promise<void> {
    *                                disambiguate, and unversioned URLs keep
    *                                working.
    *
-   *   /ingest                      v1 and v2 only; unversioned 404s.
+   *   /ingest                      v1, v2, and unversioned — where unversioned
+   *                                is pinned to v2 rather than tracking newest.
    *
-   * Ingest is strict because the two wire formats are not distinguishable by
-   * inspection but differ by a factor of 1000: v1 reports grams and epoch
-   * seconds, v2 kilograms and ISO-8601. A misresolved version would not fail —
-   * it would succeed and write an emission total three orders of magnitude
-   * wrong into a compliance record. A 404 is the correct answer to an ambiguous
-   * ingest.
+   * The pinning is the part that matters. The two wire formats are not
+   * distinguishable by inspection but differ by a factor of 1000: v1 reports
+   * grams and epoch seconds, v2 kilograms and ISO-8601. If the unversioned path
+   * followed whichever version were newest, a future v3 would silently change
+   * what an existing caller's request means — and a misresolved version does not
+   * fail, it succeeds and writes an emission total three orders of magnitude
+   * wrong into a compliance record. So a caller who omits the version gets the
+   * semantics that were documented when they integrated, and a new format is
+   * something they opt into by naming it.
    */
   app.enableVersioning({
     type: VersioningType.URI,
