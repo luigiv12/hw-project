@@ -68,7 +68,8 @@ seeding error.
 ## Prove it
 
 Copy-paste against the live API or a local stack — set `API` and everything
-below is identical. Each block after this one is independent.
+below is identical. Run the blocks in order: steps 2, 3 and 5 all reuse `$KEY`
+from step 1, and only mean anything once it has been spent.
 
 ```bash
 # live
