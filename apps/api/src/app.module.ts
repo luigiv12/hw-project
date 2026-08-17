@@ -6,7 +6,9 @@ import {
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { DbModule } from './db/db.module';
+import { PartitionMaintenanceModule } from './db/partition-maintenance.module';
 import { HealthModule } from './health/health.module';
 import { RootModule } from './root/root.module';
 import { SitesModule } from './sites/sites.module';
@@ -45,8 +47,17 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
       }),
     }),
 
+    /**
+     * Drives the partition maintenance job. The outbox dispatcher schedules
+     * itself with setTimeout rather than using this — it polls every second and
+     * must not overlap, which self-rescheduling guarantees and a cron expression
+     * cannot express.
+     */
+    ScheduleModule.forRoot(),
+
     MetricsModule,
     DbModule,
+    PartitionMaintenanceModule,
     RootModule,
     HealthModule,
     SitesModule,

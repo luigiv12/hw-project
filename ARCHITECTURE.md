@@ -25,7 +25,7 @@ fails locally rather than in the Vercel or Railway build.
 **Stack rationale.** NestJS because it is the house standard, and because four of
 the bonus tasks map onto first-party features — global filters and interceptors
 for the response envelope, `VersioningType.URI`, `@nestjs/cqrs` for the
-command/processor split, `@nestjs/schedule` adjacent to the outbox dispatcher.
+command/processor split, `@nestjs/schedule` for partition maintenance.
 Drizzle over Prisma because the ingest path depends on emitting _specific_ SQL —
 `ON CONFLICT DO NOTHING`, `SELECT … FOR UPDATE`, `FOR UPDATE SKIP LOCKED` — and
 an ORM that abstracts those away would be working against the graded content.
@@ -424,8 +424,45 @@ the partitioning — costs more.
 
 **Partitions are not created on the ingest path.** `CREATE TABLE … PARTITION OF`
 takes an `ACCESS EXCLUSIVE` lock on the parent, which under concurrent ingest
-would serialise or deadlock writers. Partition creation belongs in a scheduled
-job; the `DEFAULT` partition covers anything that arrives early.
+would serialise or deadlock writers. The work is identical whoever triggers it, so
+it belongs in a scheduled job.
+
+### Keeping the window moving
+
+`PartitionMaintenanceService` provisions the current month plus
+`MONTHS_AHEAD` (3), at startup and daily. Three months of runway means a failed
+job or an idle deployment has weeks of slack; keeping it short holds the partition
+count down, which matters because planning time over `measurements` scales with it.
+
+Daily rather than monthly: a monthly schedule gets twelve chances a year and a
+missed one is only noticed when writes reach `DEFAULT`, whereas an idempotent daily
+pass self-heals after any outage.
+
+**Why the `DEFAULT` partition does not make this optional.** It is tempting to
+treat partition maintenance as deferrable, since `DEFAULT` catches anything
+uncovered and no data is lost. But rows in `DEFAULT` make the ordinary fix
+impossible — once a reading for an uncovered month lands there, that month can no
+longer be partitioned at all:
+
+```
+ERROR:  updated partition constraint for default partition
+        "measurements_default" would be violated by some row
+```
+
+So recovery stops being one DDL statement and becomes moving rows out of
+`DEFAULT` under load. The safety net prevents data loss, which is its job; it does
+not buy time.
+
+Because the failure is silent — totals stay correct, nothing errors — `db:verify`
+reports any rows sitting in `DEFAULT`, broken down by month, and exits non-zero.
+That is the only visible symptom of maintenance having stopped.
+
+**Concurrency.** Every replica runs the job. `create_month_partition` checks
+`to_regclass` before creating, but check and create are not atomic, so two
+replicas starting together could both pass it and one would fail on
+`duplicate_table`. The pass takes `pg_try_advisory_xact_lock` and skips if it
+cannot get it — a replica that loses has nothing to wait for, since the holder is
+doing identical work.
 
 ---
 
@@ -843,16 +880,14 @@ assumed.
 - **Caching.** Redis is provisioned and unused. The one hot read — the site
   summary — is already a single indexed row read, and a cache in front of a
   compliance figure introduces a staleness question with no matching benefit.
-- **Partition automation.** The helper exists; scheduling it does not. The
-  `DEFAULT` partition makes it non-urgent.
 - **Retention.** Discussed above; no policy implemented.
 
 ---
 
 ## 11. Verifying the claims
 
-Nothing above is asserted without a test behind it. `pnpm test` runs 135 tests:
-119 for the API — 108 of those against real Postgres, the other 11 pure unit
+Nothing above is asserted without a test behind it. `pnpm test` runs 139 tests:
+123 for the API — 92 of those against real Postgres, the other 31 pure unit
 tests over the compliance rule — and 16 for the dashboard. The integration tests
 use no mocks, because everything under test (`ON CONFLICT` semantics,
 `SELECT FOR UPDATE`, exact `numeric` arithmetic, partition routing) is database
