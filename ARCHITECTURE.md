@@ -816,10 +816,12 @@ assumed.
 
 ## 11. Verifying the claims
 
-Nothing above is asserted without a test behind it. `pnpm test` runs 127 tests,
-111 of them against real Postgres — no mocks, because everything under test
-(`ON CONFLICT` semantics, `SELECT FOR UPDATE`, exact `numeric` arithmetic,
-partition routing) is database behaviour.
+Nothing above is asserted without a test behind it. `pnpm test` runs 131 tests:
+115 for the API — 104 of those against real Postgres, the other 11 pure unit
+tests over the compliance rule — and 16 for the dashboard. The integration tests
+use no mocks, because everything under test (`ON CONFLICT` semantics,
+`SELECT FOR UPDATE`, exact `numeric` arithmetic, partition routing) is database
+behaviour.
 
 The two that matter:
 
