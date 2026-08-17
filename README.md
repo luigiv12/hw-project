@@ -257,16 +257,16 @@ looks like nothing was ever created.
 
 All eight are implemented.
 
-| #   | Task                 | What was built                                                                                                                                        | Where                                                                                                        |
-| --- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                               | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                                          |
-| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                      | `ingest.command.ts`, `ingest.handler.ts`                                                                     |
-| 3   | DB scalability       | Monthly `RANGE` partitioning, kept provisioned three months ahead by a scheduled job, plus a `DEFAULT` partition so a bad clock cannot fail an insert | `drizzle/0000_init.sql`, `partition-maintenance.service.ts` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3) |
-| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                          | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)                                       |
-| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                           | `docker-compose.yml`                                                                                         |
-| 6   | Observability        | `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it; every log line and response carries a request id | `src/observability/`, `src/common/request-id.middleware.ts`                                                  |
-| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides                | `packages/contracts/`                                                                                        |
-| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter                  | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8)                          |
+| #   | Task                 | What was built                                                                                                                                                               | Where                                                                                                        |
+| --- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                                                      | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                                          |
+| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                                             | `ingest.command.ts`, `ingest.handler.ts`                                                                     |
+| 3   | DB scalability       | Monthly `RANGE` partitioning, kept provisioned three months ahead by a scheduled job, plus a `DEFAULT` partition so a bad clock cannot fail an insert                        | `drizzle/0000_init.sql`, `partition-maintenance.service.ts` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3) |
+| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                                                 | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)                                       |
+| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                                                  | `docker-compose.yml`                                                                                         |
+| 6   | Observability        | `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it; every response carries a request id, and failures are logged against it | `src/observability/`, `src/common/all-exceptions.filter.ts`                                                  |
+| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides                                       | `packages/contracts/`                                                                                        |
+| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter                                         | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8)                          |
 
 Two are visible without reading any code:
 
@@ -316,7 +316,9 @@ Cursors are keyset rather than offsets, so pages stay correct while rows are
 being written. Hand back `nextCursor` verbatim; `null` means the last page. The
 full convention is in [ARCHITECTURE.md](./ARCHITECTURE.md#7-platform-conventions).
 
-Send `X-Request-Id` and it propagates into `meta.requestId` and every log line.
+Send `X-Request-Id` and it comes back in `meta.requestId` and as a response
+header. Any failure is logged against that id, so an error a client reports can be
+joined to its server-side log line.
 
 Every example below is a real request and its real response, captured against
 this build. The site id in the request bodies is the one from that capture —
@@ -713,7 +715,7 @@ apps/api/
   src/outbox/          transactional outbox dispatcher
   src/observability/   Prometheus metrics
   src/common/          envelope, exception filter, request id, canonical hash
-  src/db/              Drizzle schema, migrate, seed, verify
+  src/db/              Drizzle schema, migrate, seed, verify, partition upkeep
   drizzle/             hand-written SQL migrations (partitioned DDL)
   test/                integration suites
 
