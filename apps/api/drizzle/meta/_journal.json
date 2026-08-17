@@ -29,6 +29,13 @@
       "when": 1786700000000,
       "tag": "0003_outbox_lease",
       "breakpoints": false
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786800000000,
+      "tag": "0004_reading_id_per_device",
+      "breakpoints": false
     }
   ]
 }
