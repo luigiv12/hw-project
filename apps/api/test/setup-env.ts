@@ -28,5 +28,3 @@ process.env.OUTBOX_POLL_MS = '3600000';
  * production concern and is exercised by its own test, not by every other one.
  */
 process.env.RATE_LIMIT_MAX = '100000';
-
-process.env.LOG_LEVEL = 'error';
