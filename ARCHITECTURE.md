@@ -433,19 +433,32 @@ once, not once per batch forever after.
 URI versioning, and **no `defaultVersion`** — every route declares what it
 answers to, so nothing resolves by implication.
 
-| Route                          | Versions                              |
-| ------------------------------ | ------------------------------------- |
-| `/sites`, `/sites/:id/metrics` | version-neutral + v1 + v2             |
-| `/ingest`                      | v1 and v2 only — unversioned **404s** |
+| Route                          | Versions                  |
+| ------------------------------ | ------------------------- |
+| `/sites`, `/sites/:id/metrics` | version-neutral + v1 + v2 |
+| `/ingest`                      | version-neutral + v2      |
+| `/v1/ingest`                   | v1 only                   |
 
-Sites and metrics are identical across versions, so there is nothing to
-disambiguate and the brief's unversioned URLs work as written.
+Every URL the brief writes works as written. Sites and metrics are identical
+across versions, so there is nothing to disambiguate.
 
-Ingest is strict because the two wire formats are not distinguishable by
-inspection and **differ by a factor of 1000**: v1 reports grams and epoch
-seconds, v2 kilograms and ISO-8601. A misresolved version would not fail — it
-would succeed and write an emission total three orders of magnitude wrong into a
-compliance record. A 404 is the correct answer to an ambiguous ingest.
+**The unversioned `/ingest` is pinned to v2, not bound to the newest version.**
+This is the distinction that makes an unversioned write path safe: a caller who
+omits the version integrated against the semantics documented at the time, and a
+later format must not change what their existing request means. A new version is
+opted into by naming it. `/ingest` therefore stays on v2 whatever else is added
+beside it.
+
+The alternative — resolving unversioned to "latest" — moves a write endpoint's
+meaning underneath its callers on a schedule they do not control, which on an
+ingest path means the mass and timestamp units of a compliance record changing
+without the client asking.
+
+The two formats are in no danger of being confused for one another: their field
+names are disjoint (`site_id`/`ch4_grams` against `siteId`/`ch4Kg`), so a v1
+payload sent to a v2 route fails validation with field-level errors rather than
+being misread. The pinning exists for the stability of the contract, not to
+disambiguate the payloads.
 
 v1 is kept as a separate controller with an anti-corruption adapter
 (`fromLegacyIngest`) rather than optional fields on v2. Deployed firmware cannot

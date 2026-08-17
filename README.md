@@ -255,15 +255,16 @@ POST /sites                    create a site           (also /v1, /v2)
 GET  /sites?limit=&cursor=     list with totals, paginated
 GET  /sites/:id                one site
 GET  /sites/:id/metrics        summary + compliance status
+POST /ingest                   current format          (pinned to v2)
 POST /v2/ingest                current format          Idempotency-Key header
 POST /v1/ingest                legacy sensors          epoch seconds, grams, batch_id in body
 GET  /health  /health/ready    liveness / readiness
 GET  /metrics                  Prometheus exposition
 ```
 
-`POST /ingest` without a version **404s deliberately** — the two formats differ by
-a factor of 1000 (grams vs kilograms), so guessing would write a silently wrong
-regulatory total. See ARCHITECTURE.md §6.
+`POST /ingest` is **pinned to v2** rather than tracking the newest version, so a
+client that omits the version keeps the semantics it integrated against. See
+ARCHITECTURE.md §6.
 
 Every response is enveloped:
 
