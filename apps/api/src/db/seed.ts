@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { createHash } from 'node:crypto';
+import { MAX_BATCH_SIZE } from '@emissions/contracts';
 import { ingestionBatches, measurements, sites } from './schema';
 
 /**
@@ -47,8 +48,8 @@ const SEED_SITES: SeedSite[] = [
       basin: 'Duvernay',
       province: 'AB',
     },
-    // ~85% of limit — close enough to matter, so the utilisation bar earns its place.
-    perReadingKg: 15.18,
+    // 85% of limit — close enough to matter, so the utilisation bar earns its place.
+    perReadingKg: 11.79,
     devices: ['FC12-METH-01', 'FC12-METH-02'],
     expectBreach: false,
   },
@@ -61,8 +62,8 @@ const SEED_SITES: SeedSite[] = [
       basin: 'Montney',
       province: 'AB',
     },
-    // ~45% of limit.
-    perReadingKg: 12.86,
+    // 45% of limit.
+    perReadingKg: 10.01,
     devices: ['PRC-METH-01', 'PRC-METH-02', 'PRC-SAT-01'],
     expectBreach: false,
   },
@@ -78,8 +79,8 @@ const SEED_SITES: SeedSite[] = [
       province: 'AB',
       note: 'flare efficiency degraded',
     },
-    // ~130% of limit — the breach a reviewer should see on first load.
-    perReadingKg: 18.57,
+    // 130% of limit — the breach a reviewer should see on first load.
+    perReadingKg: 14.45,
     devices: ['CB7-METH-01'],
     expectBreach: true,
   },
@@ -88,16 +89,28 @@ const SEED_SITES: SeedSite[] = [
     name: 'Grande Prairie Gathering Line 3',
     emissionLimitKg: '8000.000',
     metadata: { operator: 'Slate Resources', basin: 'Montney', province: 'AB' },
-    // ~15% of limit.
-    perReadingKg: 4.29,
+    // 15% of limit.
+    perReadingKg: 3.33,
     devices: ['GP3-METH-01', 'GP3-METH-02'],
     expectBreach: false,
   },
 ];
 
-/** Readings per device per month, spread across the seeded months. */
-const READINGS_PER_DEVICE_PER_MONTH = 60;
-const MONTHS_OF_HISTORY = 3;
+/**
+ * Readings per device, at 12-hour spacing — so ~90 days of history, landing
+ * across three or four monthly partitions.
+ */
+const READINGS_PER_DEVICE = 180;
+
+/**
+ * Readings per seeded batch.
+ *
+ * Bounded by `MAX_BATCH_SIZE`, because seeded rows are meant to be shaped like
+ * ingested ones: a reviewer replaying a seeded idempotency key should exercise
+ * the same path a real client would, and a batch the API would have rejected
+ * cannot do that.
+ */
+const READINGS_PER_BATCH = Math.min(60, MAX_BATCH_SIZE);
 
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
@@ -265,34 +278,40 @@ function buildReadings(site: SeedSite) {
 
   const now = new Date();
 
-  for (let monthsAgo = MONTHS_OF_HISTORY - 1; monthsAgo >= 0; monthsAgo--) {
-    const monthStart = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 1),
-    );
+  /**
+   * A fixed count per device, counted back from now — not "whatever falls inside
+   * the last three calendar months".
+   *
+   * Anchoring to month boundaries makes the volume a function of today's date:
+   * the current month fills as it progresses, so every site's total, and its
+   * percentage of limit, climbs through the month and resets on the 1st. That
+   * makes the seeded picture — and the percentages this README quotes — depend
+   * on when someone happens to run it, and it puts `expectBreach` on a collision
+   * course with the calendar.
+   */
+  for (const deviceId of site.devices) {
+    let batchId = crypto.randomUUID();
 
-    for (const deviceId of site.devices) {
-      const batchId = crypto.randomUUID();
+    for (let i = 0; i < READINGS_PER_DEVICE; i++) {
+      // A new batch every READINGS_PER_BATCH readings, so no seeded batch is
+      // larger than the API would accept from a real producer.
+      if (i > 0 && i % READINGS_PER_BATCH === 0) batchId = crypto.randomUUID();
 
-      for (let i = 0; i < READINGS_PER_DEVICE_PER_MONTH; i++) {
-        const ts = new Date(monthStart);
-        ts.setUTCHours(ts.getUTCHours() + i * 12);
+      // Every 12 hours going back, so the series spans ~90 days and lands across
+      // three or four monthly partitions.
+      const ts = new Date(now.getTime() - i * 12 * 60 * 60 * 1000);
 
-        // Skip anything that would land in the future — a reading with a
-        // timestamp ahead of now would be nonsense in a compliance record.
-        if (ts > now) continue;
+      // Deterministic wobble so the data looks like instrument readings
+      // rather than a constant, without pulling in a PRNG dependency.
+      const wobble = 1 + Math.sin(i * 1.7 + deviceId.length) * 0.25;
 
-        // Deterministic wobble so the data looks like instrument readings
-        // rather than a constant, without pulling in a PRNG dependency.
-        const wobble = 1 + Math.sin(i * 1.7 + deviceId.length) * 0.25;
-
-        rows.push({
-          deviceId,
-          ts,
-          ch4: Number((site.perReadingKg * wobble).toFixed(4)),
-          source: deviceId.includes('SAT') ? 'satellite' : 'sensor',
-          batchId,
-        });
-      }
+      rows.push({
+        deviceId,
+        ts,
+        ch4: Number((site.perReadingKg * wobble).toFixed(4)),
+        source: deviceId.includes('SAT') ? 'satellite' : 'sensor',
+        batchId,
+      });
     }
   }
 

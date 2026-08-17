@@ -55,10 +55,11 @@ rebuilds the demo dataset from scratch when you do want it back.
 | Metrics            | http://localhost:3000/metrics                  |
 | pgAdmin (optional) | `docker compose --profile tools up -d` → :5050 |
 
-Four sites are seeded at roughly 15%, 45%, 85% and **130%** of their limits, so
-`Limit Exceeded` is visible immediately without ingesting anything. Those figures
-drift upward on the live demo as people ingest against it — which is the system
-working, not a seeding error.
+Four sites are seeded at 15%, 45%, 85% and **130%** of their limits, so
+`Limit Exceeded` is visible immediately without ingesting anything. The seed is
+deterministic — those figures are the same whenever you run it. They climb on the
+live demo as people ingest against it, which is the system working rather than a
+seeding error.
 
 ---
 
@@ -201,13 +202,15 @@ from measurements group by 1 order by 1;
 ```
 
 ```
- measurements_2026_06 | 480
- measurements_2026_07 | 480
- measurements_2026_08 | 216     ← current month, still filling
+ measurements_2026_06 | 448
+ measurements_2026_07 | 496
+ measurements_2026_08 | 496
 ```
 
-The seed writes three months ending today, so the partition names you see are
-the three months preceding your own seed, not the ones above.
+The seed writes a fixed series ending now and running ~90 days back, so the
+partition names are the months preceding your own seed rather than the ones
+above, and the split between them depends on where today falls in the month.
+The row total does not vary.
 
 `measurements` itself is a _partitioned table_ — a definition and routing layer
 with no storage of its own. Querying it reads through to the partitions, so
