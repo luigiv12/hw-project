@@ -75,6 +75,7 @@ erDiagram
         text event_type "measurements.ingested | site.limit_exceeded"
         jsonb payload
         timestamptz published_at "NULL until delivered; partial index on this"
+        timestamptz claimed_at "delivery lease — see section 5"
     }
 ```
 
@@ -234,6 +235,7 @@ flowchart TD
         LOCK["1 · SELECT site FOR UPDATE"]
         CLAIM["2 · INSERT batch, ON CONFLICT DO NOTHING"]
         REID["3a · withhold identity-scheme conflicts"]
+        RIDX["3a-bis · withhold readingId already stored at another instant"]
         INS["3b · INSERT readings, ON CONFLICT DO NOTHING"]
         DELTA["4 · delta = SUM ch4_kg for this batch_id"]
         UPD["5 · UPDATE site: total = total + delta"]
@@ -242,7 +244,7 @@ flowchart TD
 
         LOCK --> CLAIM
         CLAIM -->|claimed| REID
-        REID --> INS --> DELTA --> UPD --> OBX --> FIN
+        REID --> RIDX --> INS --> DELTA --> UPD --> OBX --> FIN
     end
 
     LOCK -.->|no such site| E404["404 SITE_NOT_FOUND"]
@@ -256,10 +258,16 @@ Step 1 serialises writers for that site. Step 4 is the one that matters: the
 delta is summed from the rows that actually landed, so anything step 3b rejected
 is excluded without the application reasoning about it.
 
-Step 3a runs **before** the insert, not after. It withholds readings the schema
-cannot adjudicate (see _When neither layer can decide_), so they are never stored
-and never reach the sum — checking afterwards would report a conflict for a row
-already counted.
+Both parts of step 3 run **before** the insert, not after. They withhold readings
+the indexes cannot adjudicate, so those never reach the sum — checking afterwards
+would report a conflict for a row already counted.
+
+`3a` handles a `(device, instant)` holding both an identified and an unidentified
+reading, which the two partial indexes cover disjointly and so neither rejects.
+`3a-bis` handles the same `readingId` arriving at a _different_ instant, which no
+index on this table can reject at all, because `reading_ts` is the partition key
+and must appear in every unique constraint. See _When neither layer can decide_
+and §9.
 
 **Everything is inside one boundary** — measurements, summary, batch record and
 outbox event become visible together or not at all. That is what makes the
