@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Post,
   Res,
+  VERSION_NEUTRAL,
 } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
 import type { Response } from 'express';
@@ -24,14 +25,20 @@ import { AppException } from '../common/app.exception';
 import { IngestMeasurementsCommand } from './ingest.command';
 
 /**
- * Current ingestion contract.
+ * Current ingestion contract, answering both `/v2/ingest` and `/ingest`.
+ *
+ * The unversioned path is **pinned to this version**, not bound to whichever is
+ * newest. A caller that omits the version is asking for the semantics that were
+ * documented when they integrated, and a later format must not silently change
+ * what their request means — so a new version is something a client opts into by
+ * naming it, never something that arrives underneath them.
  *
  * Neither this controller nor the v1 one below contains ingestion logic — both
  * translate their wire format into `IngestMeasurementsCommand` and dispatch it.
  * The transaction lives in exactly one place regardless of how many versions
  * exist.
  */
-@Controller({ path: 'ingest', version: '2' })
+@Controller({ path: 'ingest', version: [VERSION_NEUTRAL, '2'] })
 export class IngestController {
   constructor(private readonly commandBus: CommandBus) {}
 

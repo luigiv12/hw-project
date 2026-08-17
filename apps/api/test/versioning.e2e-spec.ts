@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { Harness, result } from './harness';
+import { ErrorCode } from '@emissions/contracts';
+import { Harness, reading, result } from './harness';
 
 describe('API versioning', () => {
   const h = new Harness();
@@ -7,23 +8,66 @@ describe('API versioning', () => {
   beforeAll(() => h.start());
   afterAll(() => h.stop());
 
-  describe('ingest requires an explicit version', () => {
-    it('404s an unversioned ingest rather than guessing', async () => {
+  describe('the unversioned ingest path', () => {
+    it("serves the current format, so the brief's URL works as written", async () => {
+      const site = await h.createSite();
+      const key = randomUUID();
+      const batch = [reading({ deviceId: 'UNVERSIONED', ch4Kg: '5.0000' })];
+
+      const res = await h.http
+        .post('/ingest')
+        .set('Idempotency-Key', key)
+        .send({ siteId: site.id, readings: batch });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.readingsAccepted).toBe(1);
+      await h.expectReconciled(site.id, '5', 1);
+    });
+
+    it('is the same route as /v2/ingest, not a parallel one', async () => {
+      const site = await h.createSite();
+      const key = randomUUID();
+      const batch = [reading({ deviceId: 'SHARED', ch4Kg: '7.0000' })];
+
+      await h.http
+        .post('/ingest')
+        .set('Idempotency-Key', key)
+        .send({ siteId: site.id, readings: batch });
+
+      /**
+       * Idempotency is keyed on (site, key) and knows nothing about the URL, so
+       * a retry that switches to the explicit path must still be recognised.
+       * Two routes that each accepted the batch would double the total.
+       */
+      const retry = await h.http
+        .post('/v2/ingest')
+        .set('Idempotency-Key', key)
+        .send({ siteId: site.id, readings: batch });
+
+      expect(retry.headers['x-idempotent-replay']).toBe('true');
+      await h.expectReconciled(site.id, '7', 1);
+    });
+
+    it('rejects a v1-shaped payload instead of misreading its units', async () => {
       const site = await h.createSite();
 
       /**
-       * The two wire formats are not distinguishable by inspection and differ by
-       * a factor of 1000 — v1 reports grams and epoch seconds, v2 kilograms and
-       * ISO-8601. A misresolved version would not fail; it would succeed and
-       * write a total three orders of magnitude wrong into a compliance record.
-       * Refusing is the only safe answer.
+       * The field names of the two formats are disjoint, so a legacy payload
+       * arriving here fails validation rather than having its grams counted as
+       * kilograms.
        */
       const res = await h.http
         .post('/ingest')
         .set('Idempotency-Key', randomUUID())
-        .send({ siteId: site.id, readings: [] });
+        .send({
+          site_id: site.id,
+          batch_id: randomUUID(),
+          readings: [{ device_id: 'L1', ts: 1755460000, ch4_g: 2000 }],
+        });
 
-      expect(res.status).toBe(404);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe(ErrorCode.VALIDATION_ERROR);
+      await h.expectReconciled(site.id, '0', 0);
     });
 
     it('404s an unknown version', async () => {
