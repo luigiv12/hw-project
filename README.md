@@ -1,5 +1,7 @@
 # Emissions Ingestion & Analytics Engine
 
+[![verify](https://github.com/luigiv12/hw-project/actions/workflows/verify.yml/badge.svg)](https://github.com/luigiv12/hw-project/actions/workflows/verify.yml)
+
 Methane ingestion, de-duplication, and compliance monitoring — built for the
 Highwood engineering challenge.
 
@@ -255,16 +257,16 @@ looks like nothing was ever created.
 
 All eight are implemented.
 
-| #   | Task                 | What was built                                                                                                                                    | Where                                                                               |
-| --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                           | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                 |
-| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                  | `ingest.command.ts`, `ingest.handler.ts`                                            |
-| 3   | DB scalability       | Monthly `RANGE` partitioning, plus a `DEFAULT` partition so a bad clock cannot fail an insert                                                     | `drizzle/0000_init.sql` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3)            |
-| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                      | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)              |
-| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                       | `docker-compose.yml`                                                                |
-| 6   | Observability        | Pino structured logs carrying the request id; `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it | `src/observability/`                                                                |
-| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides            | `packages/contracts/`                                                               |
-| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter              | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8) |
+| #   | Task                 | What was built                                                                                                                                        | Where                                                                                                        |
+| --- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| 1   | Concurrency control  | Pessimistic `SELECT … FOR UPDATE` on the site row, taken before the batch is claimed and held for the whole transaction                               | `ingest.handler.ts` · [§3](./ARCHITECTURE.md#3-concurrency-bonus-1)                                          |
+| 2   | Architecture pattern | Command/Processor via `@nestjs/cqrs` — both controllers build one command, a single handler owns the transaction                                      | `ingest.command.ts`, `ingest.handler.ts`                                                                     |
+| 3   | DB scalability       | Monthly `RANGE` partitioning, kept provisioned three months ahead by a scheduled job, plus a `DEFAULT` partition so a bad clock cannot fail an insert | `drizzle/0000_init.sql`, `partition-maintenance.service.ts` · [§4](./ARCHITECTURE.md#4-partitioning-bonus-3) |
+| 4   | Transactional outbox | Event written inside the ingest transaction; leased dispatcher with at-least-once delivery, retry backoff and dead-lettering                          | `src/outbox/` · [§5](./ARCHITECTURE.md#5-transactional-outbox-bonus-4)                                       |
+| 5   | Developer experience | `docker compose up` → migrate, seed, API and dashboard in dependency order. No manual steps                                                           | `docker-compose.yml`                                                                                         |
+| 6   | Observability        | Pino structured logs carrying the request id; `prom-client` counters including `emissions_ingest_duplicate_total`, split by which layer caught it     | `src/observability/`                                                                                         |
+| 7   | Type-safe contract   | One Zod definition per shape, imported by the API's validation pipes **and** the dashboard form — the same object validates both sides                | `packages/contracts/`                                                                                        |
+| 8   | API versioning       | `VersioningType.URI` with no default version. `/v1` accepts legacy sensors (grams, epoch seconds) through an anti-corruption adapter                  | `main.ts`, `contracts/src/legacy.ts` · [§6](./ARCHITECTURE.md#6-versioning-bonus-8)                          |
 
 Two are visible without reading any code:
 
