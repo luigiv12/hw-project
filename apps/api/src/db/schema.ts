@@ -159,7 +159,8 @@ export const measurements = pgTable(
      * the site total by the rows actually inserted.
      *
      * The two indexes are partial and mutually exclusive, so exactly one applies
-     * to any given row:
+     * to any given row. Both are rooted at (site, device) and differ only in what
+     * identifies a reading within that:
      *
      *   reading_id present → identity is what the producer said it is, and two
      *   readings sharing a device and timestamp are stored as distinct
@@ -169,13 +170,17 @@ export const measurements = pgTable(
      *   sensor emitting at most one reading per instant; unable to represent two
      *   genuine readings at the same instant. That limitation is why readingId
      *   exists.
+     *
+     * Neither can omit `reading_ts`, so neither can enforce identity *across*
+     * timestamps — see the cross-timestamp lookup in the ingest handler, which
+     * closes that gap and relies on the (site, device, reading_id) prefix below.
      */
     uniqueIndex('measurements_site_device_ts_key')
       .on(t.siteId, t.deviceId, t.readingTs)
       .where(sql`${t.readingId} is null`),
 
-    uniqueIndex('measurements_site_reading_id_key')
-      .on(t.siteId, t.readingId, t.readingTs)
+    uniqueIndex('measurements_site_device_reading_id_ts_key')
+      .on(t.siteId, t.deviceId, t.readingId, t.readingTs)
       .where(sql`${t.readingId} is not null`),
 
     index('measurements_site_ts_idx').on(t.siteId, t.readingTs),

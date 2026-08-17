@@ -120,6 +120,13 @@ export const readingSchema = z.object({
    * sharing a device and timestamp are stored as the distinct measurements they
    * are.
    *
+   * **Scoped per device, and independent of the timestamp.** It needs to be
+   * unique among the readings that device produces, not across the whole site —
+   * so a device-local counter is fine and does not have to be a UUID. And a
+   * reading is identified by this id alone: re-sending the same id under a
+   * different timestamp is a duplicate, not a second reading, which is what
+   * makes it safe for a device to correct its clock and replay its buffer.
+   *
    * When absent, the server falls back to treating (site, device, timestamp) as
    * the identity — a guess that is right for a sensor emitting at most one
    * reading per instant, and wrong for one that does not. A device sampling
@@ -164,12 +171,18 @@ export type Reading = z.infer<typeof readingSchema>;
 
 /**
  * The identity a reading de-duplicates on: the producer's `readingId` when
- * supplied, otherwise (device, instant). Mirrors the two partial unique indexes
- * on `measurements`; the prefix keeps the namespaces from colliding.
+ * supplied, otherwise (device, instant). Both are scoped to the device, matching
+ * the two partial unique indexes on `measurements`; the prefix keeps the
+ * namespaces from colliding.
+ *
+ * Note what the identified branch omits: the instant. Two readings sharing a
+ * device and `readingId` are the same measurement however their timestamps
+ * differ, which is what makes a re-send under a corrected clock a duplicate
+ * rather than a second reading.
  */
 function readingIdentity(r: Reading): string {
   return r.readingId
-    ? `rid:${r.readingId}`
+    ? `rid:${r.deviceId}|${r.readingId}`
     : `dev:${r.deviceId}|${new Date(r.readingTs).getTime()}`;
 }
 

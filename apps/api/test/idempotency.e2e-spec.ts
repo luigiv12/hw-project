@@ -443,5 +443,120 @@ describe('idempotency', () => {
       expect(result(second.body).readingsAccepted).toBe(0);
       await h.expectReconciled(site.id, '12', 1);
     });
+
+    /**
+     * The case the unique index cannot catch.
+     *
+     * It has to contain `reading_ts` — the partition key — so the same id at two
+     * instants is two index entries and ON CONFLICT admits both. Enforced by the
+     * cross-timestamp lookup in the handler instead.
+     */
+    it('de-duplicates on readingId across a corrected timestamp', async () => {
+      const site = await h.createSite();
+
+      await h.ingest(site.id, [
+        reading({
+          readingId: 'clock-1',
+          deviceId: 'DRIFTING',
+          readingTs: '2026-08-09T10:00:00.000Z',
+          ch4Kg: '100.0000',
+        }),
+      ]);
+
+      // The device corrects its clock and replays its buffer. Same measurement,
+      // different timestamp — the case readingId exists to make safe.
+      const replay = await h.ingest(site.id, [
+        reading({
+          readingId: 'clock-1',
+          deviceId: 'DRIFTING',
+          readingTs: '2026-08-09T09:59:58.000Z',
+          ch4Kg: '100.0000',
+        }),
+      ]);
+
+      expect(result(replay.body).readingsAccepted).toBe(0);
+      expect(result(replay.body).conflicts).toHaveLength(0);
+      await h.expectReconciled(site.id, '100', 1);
+    });
+
+    it('scopes readingId per device, so two devices may share one id', async () => {
+      const site = await h.createSite();
+
+      const res = await h.ingest(site.id, [
+        reading({ readingId: '1', deviceId: 'PROBE-A', ch4Kg: '10.0000' }),
+        reading({ readingId: '1', deviceId: 'PROBE-B', ch4Kg: '25.0000' }),
+      ]);
+
+      /**
+       * A producer assigning ids emits a device-local counter, so device B's
+       * reading "1" is not device A's. Scoping per site would have made these
+       * collide and silently dropped one.
+       */
+      expect(result(res.body).readingsAccepted).toBe(2);
+      await h.expectReconciled(site.id, '35', 2);
+    });
+
+    it('reports a differing mass under a reused readingId rather than storing it', async () => {
+      const site = await h.createSite();
+
+      await h.ingest(site.id, [
+        reading({
+          readingId: 'dup-mass',
+          deviceId: 'CONFLICT',
+          readingTs: '2026-08-09T10:00:00.000Z',
+          ch4Kg: '100.0000',
+        }),
+      ]);
+
+      const clash = await h.ingest(site.id, [
+        reading({
+          readingId: 'dup-mass',
+          deviceId: 'CONFLICT',
+          readingTs: '2026-08-09T12:00:00.000Z',
+          ch4Kg: '250.0000',
+        }),
+      ]);
+
+      /**
+       * Identical values would be a retry. A different mass under the same
+       * identity is two measurements claiming one id, so it is withheld and
+       * reported — losing it silently would understate the total with nothing
+       * downstream to contradict it.
+       */
+      expect(result(clash.body).readingsAccepted).toBe(0);
+      expect(result(clash.body).conflicts).toHaveLength(1);
+      expect(result(clash.body).conflicts[0]).toMatchObject({
+        reason: 'value_conflict',
+        deviceId: 'CONFLICT',
+        submittedCh4Kg: '250.0000',
+        storedCh4Kg: '100.0000',
+      });
+      await h.expectReconciled(site.id, '100', 1);
+    });
+
+    it('rejects one batch carrying the same readingId at two instants', async () => {
+      const site = await h.createSite();
+
+      const res = await h.ingest(site.id, [
+        reading({
+          readingId: 'same-id',
+          deviceId: 'BATCHED',
+          readingTs: '2026-08-09T10:00:00.000Z',
+          ch4Kg: '5.0000',
+        }),
+        reading({
+          readingId: 'same-id',
+          deviceId: 'BATCHED',
+          readingTs: '2026-08-09T10:00:05.000Z',
+          ch4Kg: '5.0000',
+        }),
+      ]);
+
+      // Storage keeps one row per identity, so a batch asking for two is asking
+      // for something that cannot be represented.
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+      await h.expectReconciled(site.id, '0', 0);
+    });
   });
 });

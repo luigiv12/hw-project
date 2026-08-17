@@ -64,7 +64,7 @@ erDiagram
         uuid id "PK is (id, reading_ts) - partition key must be included"
         uuid site_id FK
         uuid batch_id FK "the delta is summed over this"
-        text reading_id "UNIQUE(site_id, reading_id, reading_ts) WHERE NOT NULL"
+        text reading_id "UNIQUE(site_id, device_id, reading_id, reading_ts) WHERE NOT NULL"
         text device_id "UNIQUE(site_id, device_id, reading_ts) WHERE reading_id IS NULL"
         timestamptz reading_ts "RANGE partition key, monthly"
         numeric ch4_kg "exact decimal"
@@ -79,8 +79,10 @@ erDiagram
 ```
 
 Both `measurements` indexes contain `reading_ts` because Postgres requires the
-partition key in every unique constraint on a partitioned table. That
-requirement is the cause of the `readingId` limitation in §9.
+partition key in every unique constraint on a partitioned table. That requirement
+means neither index can enforce identity _across_ timestamps, which is why the
+`readingId` rule is completed in the ingest transaction rather than by the index
+alone — see §2.
 
 ---
 
@@ -171,11 +173,12 @@ the same readings, and Layer 1 must let the second through, because at the
 request level it genuinely is new. Only reading-level identity stops the
 double-count.
 
-Two partial, mutually exclusive unique indexes on `measurements`:
+Two partial, mutually exclusive unique indexes on `measurements`, both rooted at
+`(site, device)` and differing only in what identifies a reading within it:
 
 ```sql
-UNIQUE (site_id, device_id,  reading_ts) WHERE reading_id IS NULL      -- fallback
-UNIQUE (site_id, reading_id, reading_ts) WHERE reading_id IS NOT NULL  -- authoritative
+UNIQUE (site_id, device_id,             reading_ts) WHERE reading_id IS NULL      -- fallback
+UNIQUE (site_id, device_id, reading_id, reading_ts) WHERE reading_id IS NOT NULL  -- authoritative
 ```
 
 **Why two.** Only the producer can know whether two readings describe the same
@@ -188,6 +191,25 @@ sensors.
 The partial `WHERE` on the fallback is load-bearing: without it the natural key
 would still block two distinct readings sharing a device and timestamp, making
 `readingId` useless.
+
+**Why `readingId` needs help from the application.** Both indexes must contain
+`reading_ts`, because it is the partition key. So the authoritative index cannot
+enforce that an id is unique _across_ timestamps: `('r-1', 10:00)` and
+`('r-1', 11:00)` are distinct entries and `ON CONFLICT` admits both, storing the
+same measurement twice. That is exactly the case the contract tells producers to
+send a `readingId` for — a device recovering from a clock correction — so leaving
+it to the index would have broken the feature's stated purpose.
+
+The ingest transaction closes it by looking the identity up across all timestamps
+before inserting, and withholding a match: silently when the mass agrees, since
+that is the retry working, and as a reported `value_conflict` when it does not,
+since then two distinct measurements are claiming one id. The lookup is a plain
+`SELECT` rather than a claim, because the site row lock from §3 is already held
+for the whole transaction and no other ingest for that site can interleave.
+
+This is the one identity rule Postgres cannot express on this table. A
+non-partitioned `measurement_identities (site_id, device_id, reading_id)` table
+could — see §9 for why it is not built yet.
 
 Readings insert with `ON CONFLICT DO NOTHING`, and — the part that makes the
 whole scheme work — **the summary advances by what was inserted, not by what was
@@ -632,33 +654,46 @@ rather than left looking like live code.
 
 ## 9. Known limitations
 
-### `readingId` is unique per (site, timestamp), not per site
+### `readingId` uniqueness is enforced by the application, not by a constraint
 
-Re-sending the same `readingId` with a **different** timestamp stores and counts
-both readings. The same id at the _same_ timestamp is correctly detected.
+The rule — one measurement per `(site, device, readingId)`, at any timestamp — is
+checked by a `SELECT` in the ingest transaction (§2), because no index on
+`measurements` can express it.
 
 **Cause.** Postgres requires every unique constraint on a partitioned table to
 contain the partition key, so the identity index is necessarily
-`(site_id, reading_id, reading_ts)`.
+`(site_id, device_id, reading_id, reading_ts)` and is therefore scoped per
+timestamp.
 
 The general consequence is worth naming: **partitioning by time forces the
 partition key into every uniqueness guarantee built on that table.** Any identity
 enforced there is implicitly scoped to a partition key value, and it is easy to
 miss because the index looks correct in isolation.
 
-**Exposure today is small.** `readingId` is optional, and the automated producers
-— v1 sensors and the seed — do not send one; only the dashboard's manual ingest
-form can. Reaching the hole requires re-sending one id under a changed timestamp,
-which a human filling a form will not do by accident. The realistic future
-trigger is firmware that stamps at _send_ time rather than _sample_ time, so
-retries carry fresh timestamps.
+**What this costs.** A rule enforced by application code is only as strong as
+every writer remembering to apply it. The ingest handler is the only writer that
+does; `db/seed.ts` inserts into `measurements` directly and bypasses it. The seed
+sends no `readingId`, so nothing is wrong today, but the shape of the hazard is
+real — a second write path would silently not be covered.
 
-**The fix, if needed:** a non-partitioned `measurement_identities (site_id,
-reading_id)` table written in the ingest transaction with `ON CONFLICT DO
-NOTHING`. Strictly stronger than the current index and would make it redundant,
-leaving one mechanism per case. Roughly 5–10 GB at 100M readings, hash
-partitionable by `site_id`. Not implemented: it closes a hole in a feature with
-no producers, and the time was better spent on the concurrency tests.
+It also costs a lookup that cannot prune on the partition key, so it probes every
+partition. Measured at 14 partitions, the worst case — a 100-reading batch, all
+identified — plans in ~1 ms and executes in ~0.2 ms as a `VALUES` join. Planning
+scales with `readings × partitions`; execution scales with how many rows one site
+holds.
+
+**The fix, when it is needed:** a non-partitioned
+`measurement_identities (site_id, device_id, reading_id)` table written in the
+ingest transaction with `ON CONFLICT DO NOTHING`. It would make the rule a
+database guarantee immune to a forgetful writer, and reduce the lookup to a single
+indexed probe with no fan-out. Roughly 5–10 GB at 100M readings, hash partitionable
+by `site_id`.
+
+Not built yet because the site lock already provides the serialisation it would
+add, and one enforcement path is simpler than two while there is one writer. The
+number to watch is **rows per site**, not partition count: partitions only affect
+planning time, while the per-site row count drives the scan and is what will bind
+first.
 
 ### The error-code namespace is flat
 
@@ -816,8 +851,8 @@ assumed.
 
 ## 11. Verifying the claims
 
-Nothing above is asserted without a test behind it. `pnpm test` runs 131 tests:
-115 for the API — 104 of those against real Postgres, the other 11 pure unit
+Nothing above is asserted without a test behind it. `pnpm test` runs 135 tests:
+119 for the API — 108 of those against real Postgres, the other 11 pure unit
 tests over the compliance rule — and 16 for the dashboard. The integration tests
 use no mocks, because everything under test (`ON CONFLICT` semantics,
 `SELECT FOR UPDATE`, exact `numeric` arithmetic, partition routing) is database
@@ -835,3 +870,17 @@ recomputed `SUM(measurements)` both match; checking one alone would miss a bug
 that corrupts them together. `pnpm db:verify` performs the same reconciliation
 against live data and exits non-zero on drift, reporting the direction — stored
 above actual means double-counting, below means a lost update.
+
+### What reconciliation cannot catch
+
+Worth stating next to it, because it is easy to read reconciliation as a general
+backstop against double-counting. It compares the counter against the rows, so it
+catches **counter drift** — a summary that disagrees with the measurements it
+summarises. It cannot catch **wrong rows**.
+
+The `readingId` bug in §9 was exactly that: it stored a second row for a
+measurement already recorded, and moved the counter by it. Counter and recomputed
+sum agreed perfectly, so `db:verify` reported `ok` while the regulatory total was
+double what it should have been. Guarding against that needs an independent record
+of what has already been counted — the identity table in §9 — not a second
+aggregate over the same rows.

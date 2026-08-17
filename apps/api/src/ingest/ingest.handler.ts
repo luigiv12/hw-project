@@ -150,15 +150,72 @@ export class IngestMeasurementsHandler implements ICommandHandler<
        * downstream to contradict it.
        */
       const mixedIdentity = await this.findIdentitySchemeConflicts(tx, input);
-      const withheld = new Set(
+      const withheldByInstant = new Set(
         mixedIdentity.map(
           (c) => `${c.deviceId}|${new Date(c.readingTs).getTime()}`,
         ),
       );
 
-      const toInsert = input.readings.filter(
+      const afterMixedIdentity = input.readings.filter(
         (r) =>
-          !withheld.has(`${r.deviceId}|${new Date(r.readingTs).getTime()}`),
+          !withheldByInstant.has(
+            `${r.deviceId}|${new Date(r.readingTs).getTime()}`,
+          ),
+      );
+
+      /**
+       * Step 3a-bis — identified readings already stored at another instant.
+       *
+       * The unique index cannot catch these. It must contain `reading_ts` because
+       * that is the partition key, so ('r-1', 10:00) and ('r-1', 11:00) are
+       * distinct entries and ON CONFLICT lets both through — the same measurement
+       * counted twice. This is the one rule the database is unable to express, so
+       * it is enforced here instead.
+       *
+       * Safe as a read-then-write: step 1 holds the site row lock for the whole
+       * transaction, so no other ingest for this site can insert between this
+       * lookup and the insert below. The claim-don't-check pattern that Layer 1
+       * needs does not apply.
+       */
+      const storedById = await this.findStoredByReadingId(
+        tx,
+        input.siteId,
+        afterMixedIdentity,
+      );
+
+      const readingIdConflicts: IngestResult['conflicts'] = [];
+      const withheldById = new Set<string>();
+
+      for (const r of afterMixedIdentity) {
+        if (!r.readingId) continue;
+
+        const stored = storedById.get(`${r.deviceId}|${r.readingId}`);
+        if (!stored) continue;
+
+        withheldById.add(`${r.deviceId}|${r.readingId}`);
+
+        /**
+         * Same mass is an ordinary de-duplicated retry — the clock-correction
+         * case working, and nothing to report. It is excluded from the insert and
+         * so falls into the `skipped` count below as the duplicate it is.
+         *
+         * A differing mass is not a retry: two distinct measurements are claiming
+         * one identity, and only the producer can say which is which.
+         */
+        if (compareDecimalStrings(stored.ch4Kg, r.ch4Kg) !== 0) {
+          readingIdConflicts.push({
+            reason: 'value_conflict',
+            deviceId: r.deviceId,
+            readingTs: new Date(r.readingTs).toISOString(),
+            submittedCh4Kg: r.ch4Kg,
+            storedCh4Kg: stored.ch4Kg,
+          });
+        }
+      }
+
+      const toInsert = afterMixedIdentity.filter(
+        (r) =>
+          !r.readingId || !withheldById.has(`${r.deviceId}|${r.readingId}`),
       );
 
       /**
@@ -207,9 +264,19 @@ export class IngestMeasurementsHandler implements ICommandHandler<
         new Set(inserted.map((r) => identityOf(r))),
       );
 
-      // Merged for the response; each entry carries its own `reason`, so a
-      // consumer can tell which fix applies without parsing the message.
-      const conflicts = [...mixedIdentity, ...valueConflicts];
+      /**
+       * Merged for the response; each entry carries its own `reason`, so a
+       * consumer can tell which fix applies without parsing the message.
+       *
+       * `readingIdConflicts` cannot overlap `valueConflicts`: the readings it
+       * covers were removed from `toInsert`, and `findValueConflicts` only
+       * considers what was submitted for insertion.
+       */
+      const conflicts = [
+        ...mixedIdentity,
+        ...readingIdConflicts,
+        ...valueConflicts,
+      ];
 
       /**
        * Step 4 — the delta, computed by Postgres from the rows that landed.
@@ -409,6 +476,63 @@ export class IngestMeasurementsHandler implements ICommandHandler<
 
       return result;
     });
+  }
+
+  /**
+   * Stored readings matching this batch's `(device, readingId)` pairs, at **any**
+   * timestamp.
+   *
+   * The absence of a `reading_ts` predicate is the whole point — it is what the
+   * unique index cannot do, because the partition key must appear in it. See the
+   * call site.
+   *
+   * Written as a `JOIN (VALUES …)` rather than an OR of pairs. An OR list gives
+   * the planner nothing to push into the index condition beyond `site_id`, so it
+   * probes on that alone and filters the rest — reading every measurement the
+   * site has ever recorded, in every partition. The sibling query above escapes
+   * that by restating the instants separately; this one cannot, since having no
+   * timestamp bound is its purpose. A `VALUES` join instead gives the planner a
+   * driver relation it can nested-loop against the
+   * `(site_id, device_id, reading_id)` prefix of the identity index, and plans an
+   * order of magnitude faster besides.
+   *
+   * Keyed by `deviceId|readingId`. Where a device holds the same id at several
+   * instants — rows that predate this rule — the earliest is returned, so the
+   * reading that was stored first is the one a resend is compared against.
+   */
+  private async findStoredByReadingId(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    siteId: string,
+    readings: IngestMeasurementsCommand['input']['readings'],
+  ): Promise<Map<string, { ch4Kg: string }>> {
+    const identified = readings.filter((r) => r.readingId);
+    if (identified.length === 0) return new Map();
+
+    const pairs = identified.map(
+      (r) => sql`(${r.deviceId}::text, ${r.readingId}::text)`,
+    );
+
+    const { rows } = await tx.execute<{
+      device_id: string;
+      reading_id: string;
+      ch4_kg: string;
+    }>(sql`
+      select m.device_id, m.reading_id, m.ch4_kg
+      from ${measurements} m
+      join (values ${sql.join(pairs, sql`, `)})
+        as v(device_id, reading_id)
+        on m.device_id = v.device_id and m.reading_id = v.reading_id
+      where m.site_id = ${siteId}
+      order by m.reading_ts asc
+    `);
+
+    const byIdentity = new Map<string, { ch4Kg: string }>();
+    for (const row of rows) {
+      const key = `${row.device_id}|${row.reading_id}`;
+      if (!byIdentity.has(key)) byIdentity.set(key, { ch4Kg: row.ch4_kg });
+    }
+
+    return byIdentity;
   }
 
   /**
