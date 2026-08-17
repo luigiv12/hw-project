@@ -2,6 +2,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { sql } from 'drizzle-orm';
 import { Pool } from 'pg';
 import { createHash } from 'node:crypto';
+import { MAX_BATCH_SIZE } from '@emissions/contracts';
 import { ingestionBatches, measurements, sites } from './schema';
 
 /**
@@ -109,7 +110,7 @@ const READINGS_PER_DEVICE = 180;
  * the same path a real client would, and a batch the API would have rejected
  * cannot do that.
  */
-const READINGS_PER_BATCH = 60;
+const READINGS_PER_BATCH = Math.min(60, MAX_BATCH_SIZE);
 
 async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
