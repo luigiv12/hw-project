@@ -89,6 +89,14 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-emissions}:${POSTGRES_PASSWORD:-emissions}@postgres:5432/${POSTGRES_DB:-emissions}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001}
       OUTBOX_POLL_MS: ${OUTBOX_POLL_MS:-1000}
+      # Passed through so the settings listed in .env.example actually reach the
+      # container. Each is unset by default and falls back to the schema default
+      # in src/config/env.ts.
+      ALERTING_WEBHOOK_URL: ${ALERTING_WEBHOOK_URL:-}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      RATE_LIMIT_TTL_MS: ${RATE_LIMIT_TTL_MS:-60000}
     ports:
       - "${API_PORT:-3000}:3000"
     depends_on:

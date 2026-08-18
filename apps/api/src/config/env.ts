@@ -7,6 +7,20 @@ import { z } from 'zod';
  * loudly, rather than surfacing later as an undefined connection string halfway
  * through an ingest transaction.
  */
+/**
+ * Treats an empty value as absent.
+ *
+ * Whether an unset variable arrives missing or as `""` depends on who is doing
+ * the setting: a compose `${VAR:-}` default, a deployment platform's blank
+ * field, and an exported-but-empty shell variable all produce the empty string.
+ * `.optional()` alone accepts only the first of those, so a blank value fails
+ * validation and takes the process down at boot — for a setting the operator
+ * deliberately left blank.
+ */
+function blankAsUnset<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((v) => (v === '' ? undefined : v), schema.optional());
+}
+
 export const envSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -32,7 +46,7 @@ export const envSchema = z.object({
    * that delivery is *attempted exactly according to the outbox*, not that some
    * particular downstream exists.
    */
-  ALERTING_WEBHOOK_URL: z.string().url().optional(),
+  ALERTING_WEBHOOK_URL: blankAsUnset(z.string().url()),
 
   RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
@@ -61,7 +75,7 @@ export const envSchema = z.object({
    * counts, error rates, and — through the default process collectors — runtime
    * and version detail worth not publishing.
    */
-  METRICS_TOKEN: z.string().min(1).optional(),
+  METRICS_TOKEN: blankAsUnset(z.string().min(1)),
 });
 
 export type Env = z.infer<typeof envSchema>;
