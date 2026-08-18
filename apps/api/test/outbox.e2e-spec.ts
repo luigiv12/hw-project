@@ -13,7 +13,18 @@ describe('transactional outbox', () => {
   const h = new Harness();
 
   beforeAll(() => h.start());
-  afterAll(() => h.stop());
+
+  /**
+   * The exhausted-delivery tests below insert rows that are dead-lettered by
+   * construction, and nothing drains them — that is the point. Left behind they
+   * accumulate across runs and, worse, hold `emissions_outbox_dead_lettered`
+   * permanently above zero, which is the one gauge whose whole meaning is that a
+   * non-zero value needs a human.
+   */
+  afterAll(async () => {
+    await h.db.delete(outbox).where(eq(outbox.eventType, 'test.exhausted'));
+    await h.stop();
+  });
 
   const eventsFor = (siteId: string) =>
     h.db.select().from(outbox).where(eq(outbox.aggregateId, siteId));
